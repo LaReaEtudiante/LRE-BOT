@@ -2,13 +2,13 @@
 -- LRE-BOT/init_db.sql
 -- ==========================
 
--- ---- CONFIG BOT ----
+-- CONFIG BOT
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
 
--- ---- USERS ----
+-- UTILISATEURS
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
@@ -27,7 +27,15 @@ CREATE TABLE IF NOT EXISTS users (
     missed_validations INTEGER DEFAULT 0
 );
 
--- ---- PARTICIPANTS ----
+-- STICKY
+CREATE TABLE IF NOT EXISTS stickies (
+    channel_id INTEGER PRIMARY KEY,
+    message_id INTEGER,
+    text TEXT,
+    requested_by INTEGER
+);
+
+-- PARTICIPANTS
 CREATE TABLE IF NOT EXISTS participants (
     guild_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -37,7 +45,7 @@ CREATE TABLE IF NOT EXISTS participants (
     PRIMARY KEY (guild_id, user_id)
 );
 
--- ---- SESSION LOGS ----
+-- SESSION LOGS
 CREATE TABLE IF NOT EXISTS session_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id INTEGER NOT NULL,
@@ -48,17 +56,7 @@ CREATE TABLE IF NOT EXISTS session_logs (
     validated INTEGER DEFAULT 0
 );
 
--- ---- STICKIES ----
-CREATE TABLE IF NOT EXISTS stickies (
-    guild_id INTEGER NOT NULL,
-    channel_id INTEGER NOT NULL,
-    message_id INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    author_id INTEGER NOT NULL,
-    PRIMARY KEY (guild_id, channel_id)
-);
-
--- ---- PRESENCE CHECKS ----
+-- PRESENCE CHECKS
 CREATE TABLE IF NOT EXISTS presence_checks (
     guild_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
