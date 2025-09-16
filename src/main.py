@@ -18,7 +18,6 @@ async def setup_hook():
         "cogs.admin",
         "cogs.user",
         "cogs.pomodoro",
-        "cogs.sticky",
         "cogs.events"
     ]
     for cog in initial_cogs:
