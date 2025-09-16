@@ -38,6 +38,34 @@ class Events(commands.Cog):
             await conn.commit()
         print(f"[INFO] {member} a quitté, leave_date mis à jour")
 
+    # ─── Sticky auto-refresh ─────────────────────────────────────
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot:
+            return  # ignorer les bots
+
+        guild_id = message.guild.id
+        channel_id = message.channel.id
+
+        # Vérifier si un sticky est défini pour ce salon
+        sticky = await db.get_sticky(guild_id, channel_id)
+        if not sticky:
+            return
+
+        sticky_id, content, author_id = sticky
+
+        try:
+            old_msg = await message.channel.fetch_message(sticky_id)
+            await old_msg.delete()
+        except Exception:
+            pass  # si l'ancien sticky n'existe plus, on ignore
+
+        # Reposter le sticky
+        new_sticky = await message.channel.send(content)
+
+        # Mettre à jour en DB
+        await db.set_sticky(guild_id, channel_id, new_sticky.id, content, author_id)
+
 
 async def setup(bot):
     await bot.add_cog(Events(bot))
