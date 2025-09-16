@@ -11,16 +11,22 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="*", intents=intents)
 
-# Charger les cogs
-initial_cogs = [
-    "cogs.admin",
-    "cogs.user",
-    "cogs.pomodoro",
-    "cogs.sticky",
-    "cogs.events"
-]
+# Charger les cogs au démarrage
+@bot.event
+async def setup_hook():
+    initial_cogs = [
+        "cogs.admin",
+        "cogs.user",
+        "cogs.pomodoro",
+        "cogs.sticky",
+        "cogs.events"
+    ]
+    for cog in initial_cogs:
+        await bot.load_extension(cog)
+    print("[INFO] Tous les cogs ont été chargés avec succès.")
 
-for cog in initial_cogs:
-    bot.load_extension(cog)
+# Lancer le bot
+if config.TOKEN is None:
+    raise ValueError("❌ Le token Discord est introuvable. Vérifie ton fichier .env !")
 
 bot.run(config.TOKEN)
