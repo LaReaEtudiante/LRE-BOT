@@ -44,6 +44,27 @@ async def set_setting(key: str, value: str):
         await db.commit()
 
 
+async def get_maintenance(guild_id: int) -> bool:
+    """Vérifie si le mode maintenance est actif"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT value FROM settings WHERE key=?",
+            (f"maintenance_{guild_id}",),
+        )
+        row = await cur.fetchone()
+        return row and row[0] == "1"
+
+
+async def set_maintenance(guild_id: int, enabled: bool):
+    """Active/désactive le mode maintenance"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (f"maintenance_{guild_id}", "1" if enabled else "0"),
+        )
+        await db.commit()
+
+
 def get_prefix():
     """Récupère le préfixe du bot, fallback = '*'"""
     import asyncio
@@ -158,8 +179,15 @@ async def ajouter_temps(user_id: int, guild_id: int, elapsed: int, mode: str, is
                 """,
                 (elapsed, elapsed, 1 if is_session_end else 0, user_id),
             )
-        else:
-            return
+        await db.commit()
+
+
+async def clear_all_stats(guild_id: int):
+    """Réinitialise toutes les stats pour un serveur donné"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM users")
+        await db.execute("DELETE FROM participants WHERE guild_id=?", (guild_id,))
+        await db.execute("DELETE FROM stickies WHERE guild_id=?", (guild_id,))
         await db.commit()
 
 
