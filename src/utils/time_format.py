@@ -25,14 +25,3 @@ def format_seconds(seconds: int) -> str:
         parts.append(f"{seconds}s")
 
     return " ".join(parts)
-# --- TESTS TEMPORAIRES ---
-if __name__ == "__main__":
-    examples = [
-        45,          # 45s
-        3600 + 62,   # 1h 1min 2s
-        86400 * 3,   # 3j
-        2592000 + 70,# 1mo 1min 10s
-        31536000*2 + 86400*5 + 3661, # 2a 5j 1h 1min 1s
-    ]
-    for e in examples:
-        print(f"{e} sec -> {format_seconds(e)}")
