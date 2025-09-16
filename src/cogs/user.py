@@ -43,7 +43,6 @@ class UserCommands(commands.Cog):
                 f"{prefix}defa — définir ou créer le rôle A\n"
                 f"{prefix}defb — définir ou créer le rôle B\n"
                 f"{prefix}colle — coller un sticky message\n"
-                f"{prefix}décoller — retirer un sticky message\n"
                 f"{prefix}clear_stats — réinitialiser toutes les stats\n"
                 f"{prefix}update — mise à jour & redémarrage du bot\n"
             ),
@@ -87,10 +86,20 @@ class UserCommands(commands.Cog):
             await ctx.send("⚠️ Vous n’avez encore aucune donnée enregistrée.")
             return
 
+        # Session en cours ?
+        active = await db.get_active_session(guild_id, ctx.author.id)
+        if active:
+            join_ts, mode = active
+            elapsed = db.now_ts() - join_ts
+            status = f"En **mode {mode}** depuis {format_seconds(elapsed)}"
+        else:
+            status = "Pas en session actuellement"
+
         embed = discord.Embed(
             title=f"📋 Stats de {ctx.author.display_name}",
             color=discord.Color.teal()
         )
+        embed.add_field(name="Session en cours", value=status, inline=False)
         embed.add_field(name="⏱ Temps total", value=format_seconds(user["total_time"]), inline=False)
         embed.add_field(name="🅰️ Mode A travail", value=format_seconds(user["total_A"]), inline=True)
         embed.add_field(name="🅱️ Mode B travail", value=format_seconds(user["total_B"]), inline=True)
@@ -113,6 +122,8 @@ class UserCommands(commands.Cog):
         embed.add_field(name="Utilisateurs uniques", value=str(stats["users"]), inline=False)
         embed.add_field(name="Temps total", value=format_seconds(stats["total_time"]), inline=False)
         embed.add_field(name="Moyenne/utilisateur", value=format_seconds(stats["avg_time"]), inline=False)
+        embed.add_field(name="📅 Sessions 7 jours", value=stats["last_7_days"], inline=False)
+        embed.add_field(name="🗓 Sessions 4 semaines", value=stats["last_4_weeks"], inline=False)
 
         await ctx.send(embed=embed)
 
@@ -134,7 +145,11 @@ class UserCommands(commands.Cog):
                 lines = []
                 for i, (uid, val) in enumerate(entries, start=1):
                     user = await self.bot.fetch_user(uid)
-                    lines.append(f"{i}. {user.display_name} — {format_seconds(val) if isinstance(val, int) else val}")
+                    if isinstance(val, int):
+                        label = format_seconds(val)
+                    else:
+                        label = str(val)
+                    lines.append(f"{i}. {user.display_name} — {label}")
                 value = "\n".join(lines)
 
             embed.add_field(name=title, value=value, inline=False)
