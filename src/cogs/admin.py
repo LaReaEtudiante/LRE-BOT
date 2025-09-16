@@ -13,15 +13,6 @@ from utils.time_format import format_seconds
 POMO_ROLE_A = "Mode A"
 POMO_ROLE_B = "Mode B"
 
-
-# ─── CHECKS ───────────────────────────────────────────────
-
-def is_admin():
-    async def predicate(ctx):
-        return ctx.author.guild_permissions.administrator
-    return commands.check(predicate)
-
-
 # ─── STATUS ───────────────────────────────────────────────
 
 class AdminCog(commands.Cog):
@@ -29,7 +20,7 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="status", help="Afficher état global du bot")
-    @is_admin()
+    @checks.is_admin()
     async def status(self, ctx):
         latency = round(self.bot.latency * 1000)
         now_utc = datetime.now(timezone.utc)
@@ -82,7 +73,7 @@ class AdminCog(commands.Cog):
     # ─── MAINTENANCE ──────────────────────────────────────
 
     @commands.command(name="maintenance", help="Activer ou désactiver le mode maintenance")
-    @is_admin()
+    @checks.is_admin()
     async def maintenance(self, ctx):
         guild_id = ctx.guild.id
         enabled = not await db.get_maintenance(guild_id)
@@ -104,7 +95,7 @@ class AdminCog(commands.Cog):
     # ─── CONFIG SALON ─────────────────────────────────────
 
     @commands.command(name="defs", help="Définir le salon Pomodoro")
-    @is_admin()
+    @checks.is_admin()
     async def defs(self, ctx, channel: discord.TextChannel = None):
         channel = channel or ctx.channel
         await db.set_setting(f"pomodoro_channel_{ctx.guild.id}", str(channel.id))
@@ -120,7 +111,7 @@ class AdminCog(commands.Cog):
     # ─── CONFIG RÔLE A ────────────────────────────────────
 
     @commands.command(name="defa", help="Définir ou créer le rôle Pomodoro A")
-    @is_admin()
+    @checks.is_admin()
     async def defa(self, ctx, *, role_name: str = None):
         guild_id = ctx.guild.id
         role_name = role_name or POMO_ROLE_A
@@ -142,7 +133,7 @@ class AdminCog(commands.Cog):
     # ─── CONFIG RÔLE B ────────────────────────────────────
 
     @commands.command(name="defb", help="Définir ou créer le rôle Pomodoro B")
-    @is_admin()
+    @checks.is_admin()
     async def defb(self, ctx, *, role_name: str = None):
         guild_id = ctx.guild.id
         role_name = role_name or POMO_ROLE_B
@@ -164,7 +155,7 @@ class AdminCog(commands.Cog):
     # ─── COLLE (sticky message) ───────────────────────────
 
     @commands.command(name="colle", help="Créer un sticky message")
-    @is_admin()
+    @checks.is_admin()
     async def colle(self, ctx, *, message: str):
         guild_id = ctx.guild.id
         channel_id = ctx.channel.id
@@ -192,7 +183,7 @@ class AdminCog(commands.Cog):
     # ─── CLEAR STATS ─────────────────────────────────────
 
     @commands.command(name="clear_stats", help="Réinitialiser toutes les stats")
-    @is_admin()
+    @checks.is_admin()
     async def clear_stats(self, ctx):
         await db.clear_all_stats(ctx.guild.id)
 
@@ -207,7 +198,7 @@ class AdminCog(commands.Cog):
     # ─── UPDATE ──────────────────────────────────────────
 
     @commands.command(name="update", help="Mettre à jour et redémarrer le bot")
-    @is_admin()
+    @checks.is_admin()
     async def update(self, ctx):
         await ctx.send("♻️ Mise à jour lancée, le bot va redémarrer...")
         try:
