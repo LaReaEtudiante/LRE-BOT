@@ -5,14 +5,17 @@ import discord
 from discord.ext import commands
 from core import db, config
 from utils.time_format import format_seconds
-
+from utils import checks
 
 class UserCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ─── Help ───────────────────────────────────────────────
+# ─── Help ───────────────────────────────────────────────
     @commands.command(name="help", help="Afficher la liste des commandes")
+    @checks.in_pomodoro_channel()
+    @checks.roles_are_set()
+    @checks.not_in_maintenance()
     async def help_command(self, ctx: commands.Context):
         prefix = config.get_prefix()
 
@@ -49,22 +52,31 @@ class UserCommands(commands.Cog):
             inline=False
         )
 
-        await ctx.send(embed=e)
+        await ctx.send(embed=e)    
 
     # ─── Join A ─────────────────────────────────────────────
     @commands.command(name="joina", help="Rejoindre le mode A (50-10)")
+    @checks.in_pomodoro_channel()
+    @checks.roles_are_set()
+    @checks.not_in_maintenance()
     async def joina(self, ctx: commands.Context):
         await db.add_participant(ctx.guild.id, ctx.author.id, "A")
         await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode A (50-10)** !")
 
     # ─── Join B ─────────────────────────────────────────────
     @commands.command(name="joinb", help="Rejoindre le mode B (25-5)")
+    @checks.in_pomodoro_channel()
+    @checks.roles_are_set()
+    @checks.not_in_maintenance()
     async def joinb(self, ctx: commands.Context):
         await db.add_participant(ctx.guild.id, ctx.author.id, "B")
         await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode B (25-5)** !")
 
     # ─── Leave ──────────────────────────────────────────────
     @commands.command(name="leave", help="Quitter la session en cours")
+    @checks.in_pomodoro_channel()
+    @checks.roles_are_set()
+    @checks.not_in_maintenance()
     async def leave(self, ctx: commands.Context):
         join_ts, mode = await db.remove_participant(ctx.guild.id, ctx.author.id)
         if join_ts is None:
@@ -78,6 +90,9 @@ class UserCommands(commands.Cog):
 
     # ─── Me ────────────────────────────────────────────────
     @commands.command(name="me", help="Afficher vos stats personnelles")
+    @checks.in_pomodoro_channel()
+    @checks.roles_are_set()
+    @checks.not_in_maintenance()
     async def me(self, ctx: commands.Context):
         guild_id = ctx.guild.id
         user = await db.get_user(ctx.author.id, guild_id)
@@ -111,6 +126,9 @@ class UserCommands(commands.Cog):
 
     # ─── Stats serveur ─────────────────────────────────────
     @commands.command(name="stats", help="Afficher les stats du serveur")
+    @checks.in_pomodoro_channel()
+    @checks.roles_are_set()
+    @checks.not_in_maintenance()
     async def stats(self, ctx: commands.Context):
         guild_id = ctx.guild.id
         stats = await db.get_server_stats(guild_id)
@@ -129,6 +147,9 @@ class UserCommands(commands.Cog):
 
     # ─── Leaderboard ───────────────────────────────────────
     @commands.command(name="leaderboard", help="Classements divers")
+    @checks.in_pomodoro_channel()
+    @checks.roles_are_set()
+    @checks.not_in_maintenance()
     async def leaderboard(self, ctx: commands.Context):
         guild_id = ctx.guild.id
         lb = await db.get_leaderboards(guild_id)
