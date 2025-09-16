@@ -17,7 +17,7 @@ class UserCommands(commands.Cog):
     @checks.roles_are_set()
     @checks.not_in_maintenance()
     async def help_command(self, ctx: commands.Context):
-        prefix = config.get_prefix()
+        prefix = ctx.prefix
 
         e = discord.Embed(
             title="📖 Aide - Commandes disponibles",
