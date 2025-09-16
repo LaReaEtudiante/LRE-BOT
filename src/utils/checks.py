@@ -2,28 +2,31 @@
 # LRE-BOT/src/utils/checks.py
 # ==========================
 from discord.ext import commands
-from core import config
+from core import db
 
 def is_admin():
     async def predicate(ctx):
         return ctx.author.guild_permissions.administrator
     return commands.check(predicate)
 
+
 def in_pomodoro_channel():
     async def predicate(ctx):
-        pomodoro_channel_id = config.get_pomodoro_channel(ctx.guild.id)
-        return ctx.channel and ctx.channel.id == pomodoro_channel_id
+        pomodoro_channel_id = await db.get_setting("channel_id", default=None)
+        return ctx.channel and str(ctx.channel.id) == str(pomodoro_channel_id)
     return commands.check(predicate)
+
 
 def roles_are_set():
     async def predicate(ctx):
-        guild_id = ctx.guild.id
-        role_a = config.get_role_a(guild_id)
-        role_b = config.get_role_b(guild_id)
+        role_a = await db.get_setting("pomodoro_role_A", default=None)
+        role_b = await db.get_setting("pomodoro_role_B", default=None)
         return role_a is not None and role_b is not None
     return commands.check(predicate)
 
+
 def not_in_maintenance():
     async def predicate(ctx):
-        return not config.is_in_maintenance(ctx.guild.id)
+        val = await db.get_setting("maintenance", default="0")
+        return val != "1"
     return commands.check(predicate)
