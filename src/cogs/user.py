@@ -60,6 +60,7 @@ class UserCommands(commands.Cog):
                 f"{prefix}defa — définir ou créer le rôle A\n"
                 f"{prefix}defb — définir ou créer le rôle B\n"
                 f"{prefix}colle — coller un sticky message\n"
+                f"{prefix}decoller — retirer un sticky message\n"
                 f"{prefix}clear_stats — réinitialiser toutes les stats\n"
                 f"{prefix}update — mise à jour & redémarrage du bot\n"
             ),
