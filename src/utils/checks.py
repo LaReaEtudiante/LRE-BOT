@@ -10,7 +10,6 @@ def is_admin():
         return ctx.author.guild_permissions.administrator
     return commands.check(predicate)
 
-
 def in_pomodoro_channel():
     async def predicate(ctx):
         pomodoro_channel_id = await db.get_setting("channel_id", default=None, cast=int)
