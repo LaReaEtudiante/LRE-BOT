@@ -13,7 +13,7 @@ def is_admin():
 def in_pomodoro_channel():
     async def predicate(ctx):
         pomodoro_channel_id = await db.get_setting("channel_id", default=None)
-        if ctx.channel and str(ctx.channel.id) == str(pomodoro_channel_id):
+        if ctx.channel and int(ctx.channel.id) == int(pomodoro_channel_id):
             return True
         raise commands.CheckFailure("NO_POMODORO_CHANNEL")
     return commands.check(predicate)
