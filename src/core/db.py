@@ -26,23 +26,36 @@ async def init_db():
 
 
 # ─── SETTINGS ─────────────────────────────────────────────
-
-async def get_setting(key: str, default=None):
+async def get_setting(key: str, default=None, cast=str):
+    """
+    Récupère une valeur de configuration depuis la DB.
+    :param key: clé
+    :param default: valeur par défaut si non trouvée
+    :param cast: fonction pour convertir la valeur (ex: int, bool, str)
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
         row = await cur.fetchone()
-        return row[0] if row else default
+        if row and row[0] is not None:
+            try:
+                return cast(row[0])
+            except (ValueError, TypeError):
+                return default
+        return default
 
-
-async def set_setting(key: str, value: str):
+async def set_setting(key: str, value):
+    """
+    Sauvegarde une valeur de configuration dans la DB.
+    :param key: clé
+    :param value: valeur (sera stockée en str)
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
+            (key, str(value)),
         )
         await db.commit()
-
 
 async def get_maintenance(guild_id: int) -> bool:
     """Vérifie si le mode maintenance est actif"""
