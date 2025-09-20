@@ -13,9 +13,6 @@ class UserCommands(commands.Cog):
 
 # ─── Help ───────────────────────────────────────────────
     @commands.command(name="help", help="Afficher la liste des commandes")
-    @checks.in_pomodoro_channel()
-    @checks.roles_are_set()
-    @checks.not_in_maintenance()
     async def help_command(self, ctx: commands.Context):
         prefix = ctx.prefix
 
