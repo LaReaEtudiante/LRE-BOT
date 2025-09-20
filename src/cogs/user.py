@@ -15,6 +15,23 @@ class UserCommands(commands.Cog):
     @commands.command(name="help", help="Afficher la liste des commandes")
     async def help_command(self, ctx: commands.Context):
         prefix = ctx.prefix
+        # Vérifications de config
+        role_a = await db.get_setting("pomodoro_role_A", default=None)
+        role_b = await db.get_setting("pomodoro_role_B", default=None)
+        channel_id = await db.get_setting("channel_id", default=None)
+
+        if not role_a or not role_b or not channel_id:
+            if ctx.author.guild_permissions.administrator:
+                await ctx.send(
+                    "⚠️ Le bot n’est pas encore configuré correctement.\n"
+                    "➡️ Tapez `*status` pour voir les étapes de configuration."
+                )
+            else:
+                await ctx.send(
+                    "⚠️ Le bot n’est pas encore configuré correctement.\n"
+                    "➡️ Merci de contacter un administrateur."
+                )
+            return
 
         e = discord.Embed(
             title="📖 Aide - Commandes disponibles",
