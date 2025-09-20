@@ -13,7 +13,9 @@ def is_admin():
 def in_pomodoro_channel():
     async def predicate(ctx):
         pomodoro_channel_id = await db.get_setting("channel_id", default=None)
-        return ctx.channel and str(ctx.channel.id) == str(pomodoro_channel_id)
+        if ctx.channel and str(ctx.channel.id) == str(pomodoro_channel_id):
+            return True
+        raise commands.CheckFailure("NO_POMODORO_CHANNEL")
     return commands.check(predicate)
 
 
@@ -21,7 +23,9 @@ def roles_are_set():
     async def predicate(ctx):
         role_a = await db.get_setting("pomodoro_role_A", default=None)
         role_b = await db.get_setting("pomodoro_role_B", default=None)
-        return role_a is not None and role_b is not None
+        if role_a and role_b:
+            return True
+        raise commands.CheckFailure("NO_POMODORO_ROLES")
     return commands.check(predicate)
 
 
