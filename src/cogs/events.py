@@ -41,6 +41,7 @@ class Events(commands.Cog):
     # ─── Sticky auto-refresh ─────────────────────────────────────
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
+        """Vérifie les stickies et relance la détection de commandes."""
         if message.author.bot:
             return  # ignorer les bots
 
@@ -49,28 +50,27 @@ class Events(commands.Cog):
 
         # Vérifier si un sticky est défini pour ce salon
         sticky = await db.get_sticky(guild_id, channel_id)
-        if not sticky:
-            return
+        if sticky:
+            sticky_id, content, author_id = sticky
 
-        sticky_id, content, author_id = sticky
+            try:
+                old_msg = await message.channel.fetch_message(sticky_id)
+                await old_msg.delete()
+            except Exception:
+                pass  # si l'ancien sticky n'existe plus, on ignore
 
-        try:
-            old_msg = await message.channel.fetch_message(sticky_id)
-            await old_msg.delete()
-        except Exception:
-            pass  # si l'ancien sticky n'existe plus, on ignore
+            # Reposter le sticky
+            new_sticky = await message.channel.send(content)
 
-        # Reposter le sticky
-        new_sticky = await message.channel.send(content)
+            # Mettre à jour en DB
+            await db.set_sticky(guild_id, channel_id, new_sticky.id, content, author_id)
 
-        # Mettre à jour en DB
-        await db.set_sticky(guild_id, channel_id, new_sticky.id, content, author_id)
+        # 🔥 LIGNE CRUCIALE : permet de traiter les commandes (*help, *join, etc.)
+        await self.bot.process_commands(message)
 
     # ─── Gestion des erreurs de commandes ─────────────────────────────
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
-        from core import db
-
         if isinstance(error, commands.CheckFailure):
 
             # ─── Cas : rôles Pomodoro manquants ─────────────────────────
@@ -96,7 +96,9 @@ class Events(commands.Cog):
                         )
 
                     try:
-                        reaction, _ = await self.bot.wait_for("reaction_add", check=check, timeout=60.0)
+                        reaction, _ = await self.bot.wait_for(
+                            "reaction_add", check=check, timeout=60.0
+                        )
                     except Exception:
                         await ctx.send("⏳ Temps écoulé, opération annulée.")
                         return
@@ -195,6 +197,7 @@ class Events(commands.Cog):
 
                 else:
                     await ctx.send("⚠️ Le bot n’est pas configuré correctement. Contactez un administrateur.")
+
 
 async def setup(bot):
     await bot.add_cog(Events(bot))
