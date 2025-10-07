@@ -3,9 +3,19 @@
 # ==========================
 import aiosqlite
 import time
+import os
+from pathlib import Path
 from core import config
 
+# ─── CONFIGURATION DB ─────────────────────────────────────
 DB_PATH = config.DB_PATH
+
+# Création du dossier de la DB si nécessaire
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+# Résolution sûre du chemin vers init_db.sql
+BASE_DIR = Path(__file__).resolve().parents[2]  # remonte jusqu’à LRE-BOT-main/
+SCHEMA_PATH = BASE_DIR / "init_db.sql"
 
 
 # ─── UTILS ────────────────────────────────────────────────
@@ -18,21 +28,23 @@ def now_ts() -> int:
 # ─── INIT DB ──────────────────────────────────────────────
 
 async def init_db():
-    """Crée les tables si elles n'existent pas déjà"""
+    """Crée les tables si elles n'existent pas déjà."""
+    # On lit le fichier SQL depuis le bon chemin, peu importe d’où le script est lancé
+    if not SCHEMA_PATH.exists():
+        raise FileNotFoundError(f"❌ init_db.sql introuvable à : {SCHEMA_PATH}")
+
     async with aiosqlite.connect(DB_PATH) as db:
-        with open("init_db.sql", "r", encoding="utf-8") as f:
-            await db.executescript(f.read())
+        with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
+            sql_script = f.read()
+        await db.executescript(sql_script)
         await db.commit()
+        print(f"[DB] Initialisation OK → {DB_PATH}")
 
 
 # ─── SETTINGS ─────────────────────────────────────────────
+
 async def get_setting(key: str, default=None, cast=str):
-    """
-    Récupère une valeur de configuration depuis la DB.
-    :param key: clé
-    :param default: valeur par défaut si non trouvée
-    :param cast: fonction pour convertir la valeur (ex: int, bool, str)
-    """
+    """Récupère une valeur de configuration depuis la DB."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
         row = await cur.fetchone()
@@ -43,22 +55,22 @@ async def get_setting(key: str, default=None, cast=str):
                 return default
         return default
 
+
 async def set_setting(key: str, value):
-    """
-    Sauvegarde une valeur de configuration dans la DB.
-    :param key: clé
-    :param value: valeur (sera stockée en str)
-    """
+    """Sauvegarde une valeur de configuration dans la DB."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            """
+            INSERT INTO settings (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """,
             (key, str(value)),
         )
         await db.commit()
 
+
 async def get_maintenance(guild_id: int) -> bool:
-    """Vérifie si le mode maintenance est actif"""
+    """Vérifie si le mode maintenance est actif pour ce serveur."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT value FROM settings WHERE key=?",
@@ -69,7 +81,7 @@ async def get_maintenance(guild_id: int) -> bool:
 
 
 async def set_maintenance(guild_id: int, enabled: bool):
-    """Active/désactive le mode maintenance"""
+    """Active/désactive le mode maintenance pour un serveur."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
@@ -79,7 +91,7 @@ async def set_maintenance(guild_id: int, enabled: bool):
 
 
 def get_prefix():
-    """Récupère le préfixe du bot, fallback = '*'"""
+    """Récupère le préfixe du bot, fallback = '*'."""
     import asyncio
     return asyncio.run(get_setting("prefix", "*"))
 
@@ -87,6 +99,7 @@ def get_prefix():
 # ─── USERS ────────────────────────────────────────────────
 
 async def upsert_user(user_id: int, username: str, join_date: int):
+    """Ajoute ou met à jour un utilisateur dans la table users."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
@@ -101,6 +114,7 @@ async def upsert_user(user_id: int, username: str, join_date: int):
 
 
 async def get_user(user_id: int, guild_id: int):
+    """Récupère les stats d’un utilisateur."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
@@ -123,7 +137,7 @@ async def get_user(user_id: int, guild_id: int):
         return dict(zip(keys, row))
 
 
-# ─── PARTICIPANTS (sessions actives) ──────────────────────
+# ─── PARTICIPANTS ─────────────────────────────────────────
 
 async def add_participant(guild_id: int, user_id: int, mode: str):
     ts = now_ts()
@@ -140,19 +154,16 @@ async def add_participant(guild_id: int, user_id: int, mode: str):
 
 async def remove_participant(guild_id: int, user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        # Récupérer avant suppression
         cur = await db.execute(
             "SELECT join_ts, mode FROM participants WHERE guild_id=? AND user_id=?",
             (guild_id, user_id),
         )
         row = await cur.fetchone()
-
         await db.execute(
             "DELETE FROM participants WHERE guild_id=? AND user_id=?",
             (guild_id, user_id),
         )
         await db.commit()
-
     return row if row else (None, None)
 
 
@@ -163,7 +174,6 @@ async def get_participants(guild_id: int):
             (guild_id,),
         )
         return await cur.fetchall()
-
 
 # ─── TEMPS / STATS ────────────────────────────────────────
 
