@@ -4,6 +4,7 @@
 import aiosqlite
 import time
 import os
+import sqlite3
 from pathlib import Path
 from core import config
 
@@ -175,11 +176,23 @@ async def get_participants(guild_id: int):
         )
         return await cur.fetchall()
 
-# ─── TEMPS / STATS ────────────────────────────────────────
+# ─── TEMPS / STATS ────────────────────────��───────────────
 
 async def ajouter_temps(user_id: int, guild_id: int, elapsed: int, mode: str, is_session_end=False):
-    """Ajoute du temps à un utilisateur (travail/pause selon mode)."""
+    """Ajoute du temps à un utilisateur (travail/pause selon mode).
+
+    Note: on s'assure que la ligne utilisateur existe (INSERT OR IGNORE)
+    avant d'effectuer l'UPDATE. Cela évite le cas où l'utilisateur n'a
+    jamais été upserté (pas d'on_member_join déclenché) et que l'UPDATE
+    ne modifie rien.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
+        # Garantir l'existence de la ligne utilisateur (création minimale si nécessaire)
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, join_date) VALUES (?, ?, ?)",
+            (user_id, "", now_ts()),
+        )
+
         if mode == "A":
             await db.execute(
                 """
@@ -210,7 +223,17 @@ async def clear_all_stats(guild_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM users")
         await db.execute("DELETE FROM participants WHERE guild_id=?", (guild_id,))
-        await db.execute("DELETE FROM stickies WHERE guild_id=?", (guild_id,))
+
+        # stickies : essayer suppression par guild_id puis fallback sur ancienne structure
+        try:
+            await db.execute("DELETE FROM stickies WHERE guild_id=?", (guild_id,))
+        except (sqlite3.OperationalError, Exception):
+            # ancienne table stickies n'a pas de colonne guild_id : on supprime toutes les entrées
+            try:
+                await db.execute("DELETE FROM stickies")
+            except Exception:
+                pass
+
         await db.commit()
 
 
@@ -276,29 +299,61 @@ async def get_leaderboards(guild_id: int):
 
 async def set_sticky(guild_id: int, channel_id: int, message_id: int, content: str, author_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
-            INSERT OR REPLACE INTO stickies (guild_id, channel_id, message_id, content, author_id)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (guild_id, channel_id, message_id, content, author_id),
-        )
+        try:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO stickies (guild_id, channel_id, message_id, content, author_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (guild_id, channel_id, message_id, content, author_id),
+            )
+        except (sqlite3.OperationalError, Exception):
+            # Ancienne structure -> fallback (text = content, requested_by = author_id)
+            try:
+                await db.execute(
+                    """
+                    INSERT OR REPLACE INTO stickies (channel_id, message_id, text, requested_by)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (channel_id, message_id, content, author_id),
+                )
+            except Exception:
+                pass
         await db.commit()
 
 
 async def get_sticky(guild_id: int, channel_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT message_id, content, author_id FROM stickies WHERE guild_id=? AND channel_id=?",
-            (guild_id, channel_id),
-        )
-        return await cur.fetchone()
+        try:
+            cur = await db.execute(
+                "SELECT message_id, content, author_id FROM stickies WHERE guild_id=? AND channel_id=?",
+                (guild_id, channel_id),
+            )
+            row = await cur.fetchone()
+            return row
+        except (sqlite3.OperationalError, Exception):
+            # Ancienne structure fallback : chercher par channel_id
+            try:
+                cur = await db.execute(
+                    "SELECT message_id, text, requested_by FROM stickies WHERE channel_id=?",
+                    (channel_id,),
+                )
+                return await cur.fetchone()
+            except Exception:
+                return None
 
 
 async def remove_sticky(guild_id: int, channel_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "DELETE FROM stickies WHERE guild_id=? AND channel_id=?",
-            (guild_id, channel_id),
-        )
+        try:
+            await db.execute(
+                "DELETE FROM stickies WHERE guild_id=? AND channel_id=?",
+                (guild_id, channel_id),
+            )
+        except (sqlite3.OperationalError, Exception):
+            # Ancienne structure (pas de guild_id) : supprimer via channel_id
+            try:
+                await db.execute("DELETE FROM stickies WHERE channel_id=?", (channel_id,))
+            except Exception:
+                pass
         await db.commit()
