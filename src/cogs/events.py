@@ -4,6 +4,7 @@
 import discord
 from discord.ext import commands
 import time
+import os
 from core import db
 
 
@@ -14,7 +15,8 @@ class Events(commands.Cog):
     # ─── Quand le bot est prêt ───────────────────────────────────
     @commands.Cog.listener()
     async def on_ready(self):
-        print(f"[INFO] {self.bot.user} connecté ✅")
+        # Affiche le PID pour détecter plusieurs instances (utile en debug)
+        print(f"[INFO] {self.bot.user} connecté ✅ PID={os.getpid()}")
         await db.init_db()
 
     # ─── Quand un membre rejoint ─────────────────────────────────
@@ -42,28 +44,42 @@ class Events(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Vérifie les stickies et relance la détection de commandes."""
+        # Ignorer les bots
         if message.author.bot:
-            return  # ignorer les bots
+            return
+
+        # Si message en DM : on laisse le traitement normal des commandes et on quitte
+        if message.guild is None or message.channel is None:
+            await self.bot.process_commands(message)
+            return
 
         guild_id = message.guild.id
         channel_id = message.channel.id
 
-        # Vérifier si un sticky est défini pour ce salon
-        sticky = await db.get_sticky(guild_id, channel_id)
-        if sticky:
-            sticky_id, content, author_id = sticky
+        # Gérer les stickies de manière robuste (ne doit jamais empêcher process_commands)
+        try:
+            sticky = await db.get_sticky(guild_id, channel_id)
+            if sticky:
+                # sticky retourne typiquement (message_id, content, author_id) ou (message_id, text, requested_by)
+                try:
+                    old_msg = await message.channel.fetch_message(sticky[0])  # message_id
+                    await old_msg.delete()
+                except Exception:
+                    pass  # si l'ancien sticky n'existe plus, on ignore
 
-            try:
-                old_msg = await message.channel.fetch_message(sticky_id)
-                await old_msg.delete()
-            except Exception:
-                pass  # si l'ancien sticky n'existe plus, on ignore
+                # content/text est en position 1
+                content = sticky[1]
+                new_sticky = await message.channel.send(content)
 
-            # Reposter le sticky
-            new_sticky = await message.channel.send(content)
-
-            # Mettre à jour en DB
-            await db.set_sticky(guild_id, channel_id, new_sticky.id, content, author_id)
+                # Mettre à jour en DB (db.set_sticky gère le fallback)
+                try:
+                    await db.set_sticky(guild_id, channel_id, new_sticky.id, content, sticky[2] if len(sticky) > 2 else None)
+                except Exception:
+                    # Si la mise à jour échoue, on l'ignore pour ne pas casser on_message
+                    pass
+        except Exception as e:
+            # Logguer l'erreur pour debug mais ne pas bloquer la suite
+            print(f"[WARN] Erreur lors de la gestion du sticky: {e}")
 
         # 🔥 LIGNE CRUCIALE : permet de traiter les commandes (*help, *join, etc.)
         await self.bot.process_commands(message)
@@ -197,7 +213,6 @@ class Events(commands.Cog):
 
                 else:
                     await ctx.send("⚠️ Le bot n’est pas configuré correctement. Contactez un administrateur.")
-
 
 async def setup(bot):
     await bot.add_cog(Events(bot))
