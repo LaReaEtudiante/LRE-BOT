@@ -75,8 +75,11 @@ class UserCommands(commands.Cog):
     @checks.roles_are_set()
     @checks.not_in_maintenance()
     async def joina(self, ctx: commands.Context):
-        await db.add_participant(ctx.guild.id, ctx.author.id, "A")
-        await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode A (50-10)** !")
+        added = await db.add_participant(ctx.guild.id, ctx.author.id, "A")
+        if added:
+            await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode A (50-10)** !")
+        else:
+            await ctx.send(f"ℹ️ {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
 
     # ─── Join B ─────────────────────────────────────────────
     @commands.command(name="joinb", help="Rejoindre le mode B (25-5)")
@@ -84,8 +87,11 @@ class UserCommands(commands.Cog):
     @checks.roles_are_set()
     @checks.not_in_maintenance()
     async def joinb(self, ctx: commands.Context):
-        await db.add_participant(ctx.guild.id, ctx.author.id, "B")
-        await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode B (25-5)** !")
+        added = await db.add_participant(ctx.guild.id, ctx.author.id, "B")
+        if added:
+            await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode B (25-5)** !")
+        else:
+            await ctx.send(f"ℹ️ {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
 
     # ─── Leave ──────────────────────────────────────────────
     @commands.command(name="leave", help="Quitter la session en cours")
@@ -116,8 +122,7 @@ class UserCommands(commands.Cog):
             await ctx.send("⚠️ Vous n’avez encore aucune donnée enregistrée.")
             return
 
-        # Session en cours ?
-        active = await db.get_active_session(guild_id, ctx.author.id)
+        active = await db.get_active_session(guild_id, ctx.author.id) if hasattr(db, "get_active_session") else None
         if active:
             join_ts, mode = active
             elapsed = db.now_ts() - join_ts
@@ -155,8 +160,8 @@ class UserCommands(commands.Cog):
         embed.add_field(name="Utilisateurs uniques", value=str(stats["users"]), inline=False)
         embed.add_field(name="Temps total", value=format_seconds(stats["total_time"]), inline=False)
         embed.add_field(name="Moyenne/utilisateur", value=format_seconds(stats["avg_time"]), inline=False)
-        embed.add_field(name="📅 Sessions 7 jours", value=stats["last_7_days"], inline=False)
-        embed.add_field(name="🗓 Sessions 4 semaines", value=stats["last_4_weeks"], inline=False)
+        embed.add_field(name="📅 Sessions 7 jours", value=stats.get("last_7_days", "N/A"), inline=False)
+        embed.add_field(name="🗓 Sessions 4 semaines", value=stats.get("last_4_weeks", "N/A"), inline=False)
 
         await ctx.send(embed=embed)
 
@@ -180,12 +185,19 @@ class UserCommands(commands.Cog):
             else:
                 lines = []
                 for i, (uid, val) in enumerate(entries, start=1):
-                    user = await self.bot.fetch_user(uid)
+                    # fetch_user peut échouer : fallback sur get_user ou afficher id
+                    try:
+                        user = await self.bot.fetch_user(uid)
+                        display = user.display_name
+                    except Exception:
+                        user_obj = self.bot.get_user(uid)
+                        display = user_obj.display_name if user_obj else f"<{uid}>"
+
                     if isinstance(val, int):
                         label = format_seconds(val)
                     else:
                         label = str(val)
-                    lines.append(f"{i}. {user.display_name} — {label}")
+                    lines.append(f"{i}. {display} — {label}")
                 value = "\n".join(lines)
 
             embed.add_field(name=title, value=value, inline=False)
