@@ -7,6 +7,7 @@ from core import db, config
 from utils.time_format import format_seconds
 from utils import checks
 
+
 class UserCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -67,6 +68,36 @@ class UserCommands(commands.Cog):
             inline=False
         )
 
+        # --- Protection anti-doublon côté sortie ---
+        try:
+            # Parcourir l'historique récente du salon pour trouver un message du bot ayant le même embed
+            async for m in ctx.channel.history(limit=12, oldest_first=False):
+                if m.author and m.author.id == ctx.bot.user.id:
+                    # ne considérer que les messages avec embed
+                    if not m.embeds:
+                        continue
+                    emb = m.embeds[0]
+                    # comparer titre et nombre de champs
+                    if emb.title == e.title and len(emb.fields) == len(e.fields):
+                        # comparer chaque champ (name + value)
+                        identical = True
+                        for i, f in enumerate(e.fields):
+                            try:
+                                existing_field = emb.fields[i]
+                                if existing_field.name != f.name or existing_field.value != f.value:
+                                    identical = False
+                                    break
+                            except Exception:
+                                identical = False
+                                break
+                        if identical:
+                            # message identique déjà présent : on ignore l'envoi pour éviter doublon
+                            print(f"[INFO] help_command: message d'aide identique déjà présent dans le salon {ctx.channel.id}, envoi ignoré.")
+                            return
+        except Exception as ex:
+            # En cas d'erreur lors de la vérification (permissions, etc.), on continue et on envoie l'embed normalement
+            print(f"[WARN] help_command: impossible de vérifier l'historique pour déduplication: {ex}")
+
         await ctx.send(embed=e)    
 
     # ─── Join A ─────────────────────────────────────────────
@@ -81,7 +112,7 @@ class UserCommands(commands.Cog):
         else:
             await ctx.send(f"ℹ️ {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
 
-    # ─── Join B ─────────────────────────────────────────────
+    # ─── Join B ──────���──────────────────────────────────────
     @commands.command(name="joinb", help="Rejoindre le mode B (25-5)")
     @checks.in_pomodoro_channel()
     @checks.roles_are_set()
