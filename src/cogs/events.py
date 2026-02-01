@@ -6,14 +6,22 @@ from discord.ext import commands
 import time
 import os
 import traceback
+import asyncio
 from core import db
 
 
 class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # recent message cache to avoid processing duplicates (author_id, channel_id, content) -> timestamp
+        # recent message cache to avoid processing duplicates (per (author_id, channel_id))
+        # Structure: { (author_id, channel_id): {"content": str, "last_ts": int, "message_ids": set(int)} }
         self._recent_messages = {}
+        self._debounce_lock = asyncio.Lock()
+        # configuration
+        self._debounce_window = 3  # seconds: if same content within this window -> consider duplicate
+        self._max_message_ids = 6  # keep last N message ids per key
+        self._prune_interval = 20  # seconds: entries older than this will be pruned
+        self._max_cache_size = 1000  # safety cap
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -54,26 +62,73 @@ class Events(commands.Cog):
             await self.bot.process_commands(message)
             return
 
-        # Debounce key
-        key = (message.author.id, message.channel.id, message.content.strip())
-        now = int(time.time())
-        last = self._recent_messages.get(key)
-        if last and now - last < 2:
-            # doublon récent : ignorer pour éviter double traitement
-            return
-        self._recent_messages[key] = now
-        # Nettoyage léger des entrées trop vieilles
-        if len(self._recent_messages) > 200:
-            cutoff = now - 10
-            for k, ts in list(self._recent_messages.items()):
-                if ts < cutoff:
-                    del self._recent_messages[k]
-
-        guild_id = message.guild.id
+        author_id = message.author.id
         channel_id = message.channel.id
+        # normaliser le contenu pour comparaison
+        try:
+            content = message.clean_content.strip()
+        except Exception:
+            content = (message.content or "").strip()
+
+        now = int(time.time())
+        key = (author_id, channel_id)
+
+        # Debounce / dedupe logic with a lock to avoid concurrent races
+        is_duplicate = False
+        async with self._debounce_lock:
+            entry = self._recent_messages.get(key)
+            if entry:
+                # exact same message id already processed
+                if message.id in entry.get("message_ids", set()):
+                    is_duplicate = True
+                else:
+                    last_content = entry.get("content", "")
+                    last_ts = entry.get("last_ts", 0)
+                    # same content inside debounce window => consider duplicate
+                    if last_content == content and (now - last_ts) < self._debounce_window:
+                        # still record message id to avoid reprocessing further duplicates
+                        entry["message_ids"].add(message.id)
+                        # keep only last N ids
+                        if len(entry["message_ids"]) > self._max_message_ids:
+                            # trim arbitrarily (convert to set of last N by insertion order unsupported; so rebuild)
+                            # Keep the most recent by clearing and re-adding the current id and a sample of others
+                            ids = list(entry["message_ids"])
+                            ids = ids[-self._max_message_ids:]
+                            entry["message_ids"] = set(ids)
+                        is_duplicate = True
+                    else:
+                        # not considered duplicate: update entry
+                        entry["content"] = content
+                        entry["last_ts"] = now
+                        entry["message_ids"].add(message.id)
+                        if len(entry["message_ids"]) > self._max_message_ids:
+                            ids = list(entry["message_ids"])
+                            ids = ids[-self._max_message_ids:]
+                            entry["message_ids"] = set(ids)
+            else:
+                # new entry
+                self._recent_messages[key] = {
+                    "content": content,
+                    "last_ts": now,
+                    "message_ids": {message.id},
+                }
+
+            # prune old entries if cache grows or periodically for stale entries
+            if len(self._recent_messages) > self._max_cache_size:
+                # aggressive prune: remove entries older than prune_interval
+                cutoff = now - self._prune_interval
+                for k, v in list(self._recent_messages.items()):
+                    if v.get("last_ts", 0) < cutoff:
+                        del self._recent_messages[k]
+
+        if is_duplicate:
+            # doublon identifié : on ignore sans appeler process_commands
+            return
 
         # Gérer les stickies de manière robuste (ne doit jamais empêcher process_commands)
         try:
+            guild_id = message.guild.id
+            channel_id = message.channel.id
             sticky = await db.get_sticky(guild_id, channel_id)
             if sticky:
                 # sticky retourne typiquement (message_id, content, author_id) ou (message_id, text, requested_by)
