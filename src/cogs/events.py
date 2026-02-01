@@ -12,6 +12,8 @@ from core import db
 class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # recent message cache to avoid processing duplicates (author_id, channel_id, content) -> timestamp
+        self._recent_messages = {}
 
     # ─── Quand le bot est prêt ───────────────────────────────────
     @commands.Cog.listener()
@@ -44,15 +46,41 @@ class Events(commands.Cog):
     # ─── Sticky auto-refresh ─────────────────────────────────────
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Vérifie les stickies et relance la détection de commandes."""
+        """Vérifie les stickies et relance la détection de commandes.
+        Ajoute une protection contre les doublons de messages/commandes venant du même auteur
+        dans le même salon (même contenu) sur une courte fenêtre pour éviter réponses en double.
+        """
         # Ignorer les bots
         if message.author.bot:
+            return
+
+        # Optionnel : supprimer et ignorer les messages tests envoyés par des utilisateurs
+        if message.content.strip().lower() == "test":
+            try:
+                await message.delete()
+            except Exception:
+                pass
             return
 
         # Si message en DM : on laisse le traitement normal des commandes et on quitte
         if message.guild is None or message.channel is None:
             await self.bot.process_commands(message)
             return
+
+        # Debounce key
+        key = (message.author.id, message.channel.id, message.content.strip())
+        now = int(time.time())
+        last = self._recent_messages.get(key)
+        if last and now - last < 2:
+            # doublon récent : ignorer pour éviter double traitement
+            return
+        self._recent_messages[key] = now
+        # Nettoyage léger des entrées trop vieilles
+        if len(self._recent_messages) > 200:
+            cutoff = now - 10
+            for k, ts in list(self._recent_messages.items()):
+                if ts < cutoff:
+                    del self._recent_messages[k]
 
         guild_id = message.guild.id
         channel_id = message.channel.id
