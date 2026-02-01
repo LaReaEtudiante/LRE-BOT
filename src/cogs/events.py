@@ -15,14 +15,11 @@ class Events(commands.Cog):
         # recent message cache to avoid processing duplicates (author_id, channel_id, content) -> timestamp
         self._recent_messages = {}
 
-    # ─── Quand le bot est prêt ───────────────────────────────────
     @commands.Cog.listener()
     async def on_ready(self):
-        # Affiche le PID pour détecter plusieurs instances (utile en debug)
         print(f"[INFO] {self.bot.user} connecté ✅ PID={os.getpid()}")
         await db.init_db()
 
-    # ─── Quand un membre rejoint ─────────────────────────────────
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         await db.upsert_user(
@@ -32,7 +29,6 @@ class Events(commands.Cog):
         )
         print(f"[INFO] {member} a rejoint, ajouté à la DB")
 
-    # ─── Quand un membre quitte ──────────────────────────────────
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         async with db.aiosqlite.connect(db.DB_PATH) as conn:
@@ -43,7 +39,6 @@ class Events(commands.Cog):
             await conn.commit()
         print(f"[INFO] {member} a quitté, leave_date mis à jour")
 
-    # ─── Sticky auto-refresh ─────────────────────────────────────
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Vérifie les stickies et relance la détection de commandes.
@@ -99,28 +94,139 @@ class Events(commands.Cog):
                     # Si la mise à jour échoue, on l'ignore pour ne pas casser on_message
                     pass
         except Exception as e:
-            # Logguer l'erreur pour debug mais ne pas bloquer la suite
             print(f"[WARN] Erreur lors de la gestion du sticky: {e}")
 
-        # 🔥 LIGNE CRUCIALE : permet de traiter les commandes (*help, *join, etc.)
         await self.bot.process_commands(message)
 
-    # ─── Gestion des erreurs de commandes ─────────────────────────────
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
+        # Gestion spécifique MAINTENANCE_ACTIVE (doit être traitée avant les autres CheckFailure)
         if isinstance(error, commands.CheckFailure):
-
-            # ─── Cas : rôles Pomodoro manquants ─────────────────────────
-            if str(error) == "NO_POMODORO_ROLES":
-                # (le code de gestion que tu avais précédemment)
-                # ...
-                await ctx.send("⚠️ Le bot n’est pas configuré correctement. Contactez un administrateur.")
+            if str(error) == "MAINTENANCE_ACTIVE":
+                if ctx.author.guild_permissions.administrator:
+                    await ctx.send("⚠️ Le mode maintenance est actif. Les commandes sont désactivées. Désactivez le mode maintenance avec `*maintenance` pour utiliser le bot.")
+                else:
+                    await ctx.send("⚠️ Le bot est en maintenance — les commandes sont temporairement indisponibles. Réessayez plus tard.")
                 return
 
-            # ─── Cas : salon Pomodoro manquant ───────────────────────────
+            if str(error) == "NO_POMODORO_ROLES":
+                if ctx.author.guild_permissions.administrator:
+                    msg = await ctx.send(
+                        "⚠️ Aucun rôle Pomodoro trouvé.\n"
+                        "Voulez-vous que je les crée ?\n"
+                        "➡️ Mode A : par défaut `50-10`\n"
+                        "➡️ Mode B : par défaut `25-5`\n\n"
+                        "✅ : créer avec noms par défaut\n"
+                        "❌ : annuler\n"
+                        "✏️ : personnaliser les noms"
+                    )
+                    for emoji in ["✅", "❌", "✏️"]:
+                        await msg.add_reaction(emoji)
+
+                    def check(reaction, user):
+                        return (
+                            user == ctx.author
+                            and str(reaction.emoji) in ["✅", "❌", "✏️"]
+                            and reaction.message.id == msg.id
+                        )
+
+                    try:
+                        reaction, _ = await self.bot.wait_for(
+                            "reaction_add", check=check, timeout=60.0
+                        )
+                    except Exception:
+                        await ctx.send("⏳ Temps écoulé, opération annulée.")
+                        return
+
+                    if str(reaction.emoji) == "❌":
+                        await ctx.send("❌ Création des rôles annulée.")
+                        return
+
+                    if str(reaction.emoji) == "✅":
+                        role_a = await ctx.guild.create_role(name="Mode A (50-10)")
+                        role_b = await ctx.guild.create_role(name="Mode B (25-5)")
+                        await db.set_setting("pomodoro_role_A", str(role_a.id))
+                        await db.set_setting("pomodoro_role_B", str(role_b.id))
+                        await ctx.send("✅ Rôles créés et enregistrés avec succès !")
+                        return
+
+                    if str(reaction.emoji) == "✏️":
+                        await ctx.send("✏️ Envoyez le nom du rôle **Mode A** (ou tapez `annuler`).")
+
+                        def check_msg(m):
+                            return m.author == ctx.author and m.channel == ctx.channel
+
+                        msg_a = await self.bot.wait_for("message", check=check_msg)
+                        if msg_a.content.lower() == "annuler":
+                            await ctx.send("❌ Création annulée.")
+                            return
+                        role_a = await ctx.guild.create_role(name=msg_a.content)
+
+                        await ctx.send("✏️ Envoyez le nom du rôle **Mode B** (ou tapez `annuler`).")
+                        msg_b = await self.bot.wait_for("message", check=check_msg)
+                        if msg_b.content.lower() == "annuler":
+                            await ctx.send("❌ Création annulée.")
+                            return
+                        role_b = await ctx.guild.create_role(name=msg_b.content)
+
+                        await db.set_setting("pomodoro_role_A", str(role_a.id))
+                        await db.set_setting("pomodoro_role_B", str(role_b.id))
+                        await ctx.send("✅ Rôles créés et enregistrés avec succès !")
+                else:
+                    await ctx.send("⚠️ Le bot n’est pas configuré correctement. Contactez un administrateur.")
+                return
+
             if str(error) == "NO_POMODORO_CHANNEL":
-                # (le code de gestion que tu avais précédemment)
-                await ctx.send("⚠️ Le bot n’est pas configuré correctement. Contactez un administrateur.")
+                if ctx.author.guild_permissions.administrator:
+                    msg = await ctx.send(
+                        "⚠️ Aucun salon Pomodoro configuré.\n"
+                        "Voulez-vous que je crée un salon `#pomodoro` ?\n\n"
+                        "✅ : créer `#pomodoro`\n"
+                        "❌ : annuler\n"
+                        "✏️ : entrer un salon existant avec #nom"
+                    )
+                    for emoji in ["✅", "❌", "✏️"]:
+                        await msg.add_reaction(emoji)
+
+                    def check(reaction, user):
+                        return (
+                            user == ctx.author
+                            and str(reaction.emoji) in ["✅", "❌", "✏️"]
+                            and reaction.message.id == msg.id
+                        )
+
+                    try:
+                        reaction, _ = await self.bot.wait_for("reaction_add", check=check, timeout=60.0)
+                    except Exception:
+                        await ctx.send("⏳ Temps écoulé, opération annulée.")
+                        return
+
+                    if str(reaction.emoji) == "❌":
+                        await ctx.send("❌ Création du salon annulée.")
+                        return
+
+                    if str(reaction.emoji) == "✅":
+                        channel = await ctx.guild.create_text_channel("pomodoro")
+                        await db.set_setting("channel_id", str(channel.id))
+                        await ctx.send(f"✅ Salon {channel.mention} créé et enregistré avec succès !")
+                        return
+
+                    if str(reaction.emoji) == "✏️":
+                        await ctx.send("✏️ Envoyez le nom du salon existant (par ex. `#pomodoro-room`).")
+
+                        def check_msg(m):
+                            return m.author == ctx.author and m.channel == ctx.channel
+
+                        msg_channel = await self.bot.wait_for("message", check=check_msg)
+                        if not msg_channel.channel_mentions:
+                            await ctx.send("⚠️ Aucun salon mentionné, opération annulée.")
+                            return
+
+                        channel = msg_channel.channel_mentions[0]
+                        await db.set_setting("channel_id", str(channel.id))
+                        await ctx.send(f"✅ Salon {channel.mention} enregistré avec succès !")
+                else:
+                    await ctx.send("⚠️ Le bot n’est pas configuré correctement. Contactez un administrateur.")
                 return
 
             # CheckFailure non spécifique : renvoyer une info utile
@@ -137,5 +243,5 @@ class Events(commands.Cog):
             pass
 
 
-auto async def setup(bot):
+async def setup(bot):
     await bot.add_cog(Events(bot))
