@@ -47,19 +47,11 @@ class Events(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Vérifie les stickies et relance la détection de commandes.
-        Ajoute une protection contre les doublons de messages/commandes venant du même auteur
+        Protection contre les doublons de messages/commandes venant du même auteur
         dans le même salon (même contenu) sur une courte fenêtre pour éviter réponses en double.
         """
         # Ignorer les bots
         if message.author.bot:
-            return
-
-        # Optionnel : supprimer et ignorer les messages tests envoyés par des utilisateurs
-        if message.content.strip().lower() == "test":
-            try:
-                await message.delete()
-            except Exception:
-                pass
             return
 
         # Si message en DM : on laisse le traitement normal des commandes et on quitte
@@ -145,5 +137,5 @@ class Events(commands.Cog):
             pass
 
 
-async def setup(bot):
+auto async def setup(bot):
     await bot.add_cog(Events(bot))
