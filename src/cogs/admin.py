@@ -35,8 +35,10 @@ class AdminCog(commands.Cog):
         countA = len([p for p in participants if p[2] == "A"])
         countB = len([p for p in participants if p[2] == "B"])
 
-        # Salon Pomodoro
-        pomodoro_channel_id = await db.get_setting(f"pomodoro_channel_{guild_id}")
+        # Salon Pomodoro (essayer clé par-guild puis global)
+        pomodoro_channel_id = await db.get_setting(f"pomodoro_channel_{guild_id}", default=None, cast=int)
+        if pomodoro_channel_id is None:
+            pomodoro_channel_id = await db.get_setting("channel_id", default=None, cast=int)
         chan = ctx.guild.get_channel(int(pomodoro_channel_id)) if pomodoro_channel_id else None
         chan_field = f"✅ {chan.mention}" if chan else "❌ non configuré"
 
@@ -85,9 +87,36 @@ class AdminCog(commands.Cog):
             # Stopper toutes les sessions
             participants = await db.get_participants(guild_id)
             now_ts = int(datetime.now(timezone.utc).timestamp())
+
+            if participants:
+                # essayer d'obtenir le salon pomodoro pour y poster la notification
+                pomodoro_channel_id = await db.get_setting(f"pomodoro_channel_{guild_id}", default=None, cast=int)
+                if pomodoro_channel_id is None:
+                    pomodoro_channel_id = await db.get_setting("channel_id", default=None, cast=int)
+                channel = ctx.guild.get_channel(int(pomodoro_channel_id)) if pomodoro_channel_id else None
+
+                # mentionner les participants retirés
+                mentions = " ".join(f"<@{user_id}>" for user_id, _, _, _ in participants)
+                notif_msg = f"🚧 Le mode maintenance a été activé — toutes les sessions ont été arrêtées. {mentions}"
+                try:
+                    if channel:
+                        await channel.send(notif_msg)
+                    else:
+                        # fallback : envoyer dans le canal où la commande a été tapée
+                        await ctx.send(notif_msg)
+                except Exception:
+                    # si l'envoi échoue on ignore mais on continue la purge
+                    pass
+
+            # Parcourir et archiver les sessions (ajout du temps), puis supprimer les participants
             for user_id, join_ts, mode, _ in participants:
                 elapsed = now_ts - join_ts
                 await db.ajouter_temps(user_id, guild_id, elapsed, mode=mode, is_session_end=True)
+                # supprimer la ligne participant pour éviter double comptage
+                try:
+                    await db.remove_participant(guild_id, user_id)
+                except Exception:
+                    pass
 
             await ctx.send("🚧 Mode maintenance activé. Toutes les sessions ont été arrêtées.")
         else:
@@ -182,6 +211,28 @@ class AdminCog(commands.Cog):
             pass
 
 
+    @commands.command(name="decoller", help="Retirer un sticky message")
+    @checks.is_admin()
+    async def decoller(self, ctx):
+        guild_id = ctx.guild.id
+        channel_id = ctx.channel.id
+
+        existing = await db.get_sticky(guild_id, channel_id)
+        if not existing:
+            await ctx.send("ℹ️ Aucun sticky défini pour ce salon.")
+            return
+
+        # tenter de supprimer le message sticky
+        try:
+            old_msg = await ctx.channel.fetch_message(existing[0])
+            await old_msg.delete()
+        except Exception:
+            pass
+
+        await db.remove_sticky(guild_id, channel_id)
+        await ctx.send("✅ Sticky retiré.")
+
+
     # ─── CLEAR STATS ─────────────────────────────────────
 
     @commands.command(name="clear_stats", help="Réinitialiser toutes les stats")
@@ -197,16 +248,15 @@ class AdminCog(commands.Cog):
         await ctx.send(embed=e)
 
 
-    # ─── UPDATE ──────────────────────────────────────────
-
-    @commands.command(name="update", help="Mettre à jour et redémarrer le bot")
+    # ─── UPDATE (désactivée par sécurité) ───────────────────
+    @commands.command(name="update", help="Mettre à jour et redémarrer le bot (désactivée)")
     @checks.is_admin()
     async def update(self, ctx):
-        await ctx.send("♻️ Mise à jour lancée, le bot va redémarrer...")
-        try:
-            subprocess.Popen(["/home/marc/bin/deploy-lre"])
-        except Exception as e:
-            await ctx.send(f"❌ Erreur lors du déploiement : {e}")
+        await ctx.send("❌ La commande `update` est désactivée sur ce serveur. Mettez à jour manuellement sur le serveur.")
+        # Si à l'avenir tu veux une mise à jour automatique, on peut:
+        # - faire git pull dans le repo, installer requirements et redémarrer via systemd/supervisor
+        # Mais c'est potentiellement dangereux et dépend du déploiement.
+        # Je préfère laisser l'opération manuelle ici.
 
 
 # ─── SETUP ───────────────────────────────────────────────
