@@ -30,7 +30,6 @@ def now_ts() -> int:
 
 async def init_db():
     """Crée les tables si elles n'existent pas déjà."""
-    # On lit le fichier SQL depuis le bon chemin, peu importe d’où le script est lancé
     if not SCHEMA_PATH.exists():
         raise FileNotFoundError(f"❌ init_db.sql introuvable à : {SCHEMA_PATH}")
 
@@ -45,7 +44,6 @@ async def init_db():
 # ─── SETTINGS ─────────────────────────────────────────────
 
 async def get_setting(key: str, default=None, cast=str):
-    """Récupère une valeur de configuration depuis la DB."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
         row = await cur.fetchone()
@@ -58,7 +56,6 @@ async def get_setting(key: str, default=None, cast=str):
 
 
 async def set_setting(key: str, value):
-    """Sauvegarde une valeur de configuration dans la DB."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
@@ -71,7 +68,6 @@ async def set_setting(key: str, value):
 
 
 async def get_maintenance(guild_id: int) -> bool:
-    """Vérifie si le mode maintenance est actif pour ce serveur."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT value FROM settings WHERE key=?",
@@ -82,7 +78,6 @@ async def get_maintenance(guild_id: int) -> bool:
 
 
 async def set_maintenance(guild_id: int, enabled: bool):
-    """Active/désactive le mode maintenance pour un serveur."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
@@ -92,7 +87,6 @@ async def set_maintenance(guild_id: int, enabled: bool):
 
 
 def get_prefix():
-    """Récupère le préfixe du bot, fallback = '*'."""
     import asyncio
     return asyncio.run(get_setting("prefix", "*"))
 
@@ -100,7 +94,6 @@ def get_prefix():
 # ─── USERS ────────────────────────────────────────────────
 
 async def upsert_user(user_id: int, username: str, join_date: int):
-    """Ajoute ou met à jour un utilisateur dans la table users."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
@@ -115,7 +108,6 @@ async def upsert_user(user_id: int, username: str, join_date: int):
 
 
 async def get_user(user_id: int, guild_id: int):
-    """Récupère les stats d’un utilisateur."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
@@ -140,32 +132,58 @@ async def get_user(user_id: int, guild_id: int):
 
 # ─── PARTICIPANTS ─────────────────────────────────────────
 
-async def add_participant(guild_id: int, user_id: int, mode: str):
-    ts = now_ts()
+async def add_participant(guild_id: int, user_id: int, mode: str) -> bool:
+    """
+    Ajoute l'utilisateur comme participant si pas déjà présent.
+    Retourne True si nouvel ajout, False si déjà inscrit.
+    Opération atomique pour éviter les courses concurrentes.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
+        # Verrouiller la DB pour éviter race conditions entre deux appels concurrents
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            "SELECT 1 FROM participants WHERE guild_id=? AND user_id=?",
+            (guild_id, user_id),
+        )
+        exists = await cur.fetchone()
+        if exists:
+            await db.commit()
+            return False
+
+        ts = now_ts()
         await db.execute(
             """
-            INSERT OR REPLACE INTO participants (guild_id, user_id, join_ts, mode, validated)
+            INSERT INTO participants (guild_id, user_id, join_ts, mode, validated)
             VALUES (?, ?, ?, ?, 0)
             """,
             (guild_id, user_id, ts, mode),
         )
         await db.commit()
+        return True
 
 
 async def remove_participant(guild_id: int, user_id: int):
+    """
+    Retire l'utilisateur et retourne (join_ts, mode) si existait, sinon (None, None).
+    Opération atomique pour éviter double-suppression/races.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
         cur = await db.execute(
             "SELECT join_ts, mode FROM participants WHERE guild_id=? AND user_id=?",
             (guild_id, user_id),
         )
         row = await cur.fetchone()
+        if not row:
+            await db.commit()
+            return (None, None)
+
         await db.execute(
             "DELETE FROM participants WHERE guild_id=? AND user_id=?",
             (guild_id, user_id),
         )
         await db.commit()
-    return row if row else (None, None)
+        return row
 
 
 async def get_participants(guild_id: int):
@@ -176,18 +194,11 @@ async def get_participants(guild_id: int):
         )
         return await cur.fetchall()
 
-# ─── TEMPS / STATS ────────────────────────��───────────────
+
+# ─── TEMPS / STATS ────────────────────────────────────────
 
 async def ajouter_temps(user_id: int, guild_id: int, elapsed: int, mode: str, is_session_end=False):
-    """Ajoute du temps à un utilisateur (travail/pause selon mode).
-
-    Note: on s'assure que la ligne utilisateur existe (INSERT OR IGNORE)
-    avant d'effectuer l'UPDATE. Cela évite le cas où l'utilisateur n'a
-    jamais été upserté (pas d'on_member_join déclenché) et que l'UPDATE
-    ne modifie rien.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
-        # Garantir l'existence de la ligne utilisateur (création minimale si nécessaire)
         await db.execute(
             "INSERT OR IGNORE INTO users (user_id, username, join_date) VALUES (?, ?, ?)",
             (user_id, "", now_ts()),
@@ -219,7 +230,6 @@ async def ajouter_temps(user_id: int, guild_id: int, elapsed: int, mode: str, is
 
 
 async def clear_all_stats(guild_id: int):
-    """Réinitialise toutes les stats pour un serveur donné"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM users")
         await db.execute("DELETE FROM participants WHERE guild_id=?", (guild_id,))
@@ -228,7 +238,6 @@ async def clear_all_stats(guild_id: int):
         try:
             await db.execute("DELETE FROM stickies WHERE guild_id=?", (guild_id,))
         except (sqlite3.OperationalError, Exception):
-            # ancienne table stickies n'a pas de colonne guild_id : on supprime toutes les entrées
             try:
                 await db.execute("DELETE FROM stickies")
             except Exception:
@@ -238,7 +247,6 @@ async def clear_all_stats(guild_id: int):
 
 
 async def get_server_stats(guild_id: int):
-    """Retourne stats globales serveur"""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT COUNT(*), SUM(total_time), AVG(total_time) FROM users"
@@ -252,7 +260,6 @@ async def get_server_stats(guild_id: int):
 
 
 async def get_leaderboards(guild_id: int):
-    """Retourne les différents classements"""
     results = {
         "🌍 Top 10 - Global": [],
         "🥇 Top 5 - Mode A": [],
@@ -262,31 +269,26 @@ async def get_leaderboards(guild_id: int):
     }
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # Global
         cur = await db.execute(
             "SELECT user_id, total_time FROM users ORDER BY total_time DESC LIMIT 10"
         )
         results["🌍 Top 10 - Global"] = await cur.fetchall()
 
-        # Mode A
         cur = await db.execute(
             "SELECT user_id, total_A FROM users ORDER BY total_A DESC LIMIT 5"
         )
         results["🥇 Top 5 - Mode A"] = await cur.fetchall()
 
-        # Mode B
         cur = await db.execute(
             "SELECT user_id, total_B FROM users ORDER BY total_B DESC LIMIT 5"
         )
         results["🥈 Top 5 - Mode B"] = await cur.fetchall()
 
-        # Sessions
         cur = await db.execute(
             "SELECT user_id, sessions_count FROM users ORDER BY sessions_count DESC LIMIT 5"
         )
         results["🔄 Top 5 - Sessions"] = await cur.fetchall()
 
-        # Streaks
         cur = await db.execute(
             "SELECT user_id, streak_current, streak_best FROM users ORDER BY streak_best DESC LIMIT 5"
         )
@@ -308,7 +310,6 @@ async def set_sticky(guild_id: int, channel_id: int, message_id: int, content: s
                 (guild_id, channel_id, message_id, content, author_id),
             )
         except (sqlite3.OperationalError, Exception):
-            # Ancienne structure -> fallback (text = content, requested_by = author_id)
             try:
                 await db.execute(
                     """
@@ -332,7 +333,6 @@ async def get_sticky(guild_id: int, channel_id: int):
             row = await cur.fetchone()
             return row
         except (sqlite3.OperationalError, Exception):
-            # Ancienne structure fallback : chercher par channel_id
             try:
                 cur = await db.execute(
                     "SELECT message_id, text, requested_by FROM stickies WHERE channel_id=?",
@@ -351,7 +351,6 @@ async def remove_sticky(guild_id: int, channel_id: int):
                 (guild_id, channel_id),
             )
         except (sqlite3.OperationalError, Exception):
-            # Ancienne structure (pas de guild_id) : supprimer via channel_id
             try:
                 await db.execute("DELETE FROM stickies WHERE channel_id=?", (channel_id,))
             except Exception:
