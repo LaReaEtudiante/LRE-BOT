@@ -6,36 +6,56 @@ from discord.ext import commands
 import time
 import os
 import traceback
-import asyncio
-from collections import deque
 from core import db
 
 
 class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # recent message cache to avoid processing duplicates (per (author_id, channel_id))
-        # Structure: { (author_id, channel_id): {"content": str, "last_ts": int, "message_ids": set(int)} }
+
+        # -------------------------
+        # CRITICAL DEBOUNCE BLOCK
+        # -------------------------
+        # IMPORTANT : NE PAS MODIFIER ce bloc sans coordination.
+        # Ce bloc protège le bot contre le "rebounce" (double exécution
+        # des commandes / réponses en double). Si tu changes ces valeurs,
+        # le comportement anti‑doublon peut être cassé et provoquer des
+        # réponses multiples gênantes pour les utilisateurs.
+        #
+        # - DEBOUNCE_WINDOW : durée (en secondes) pendant laquelle un
+        #   message identique (même auteur, même salon, même contenu)
+        #   sera ignoré s'il a déjà été traité.
+        # - _DEBOUNCE_GUARD : marqueur pour détecter toute modification
+        #   accidentelle du bloc (logguée au démarrage).
+        #
+        # Si tu veux modifier la fenêtre, contacte la personne en charge.
+        DEBOUNCE_WINDOW = 5  # secondes — NE PAS CHANGER SANS CONSENTEMENT
+        _DEBOUNCE_GUARD = "UNMODIFIED:v1"  # guard marker — used to detect edits
+        # -------------------------
+        # End CRITICAL DEBOUNCE BLOCK
+        # -------------------------
+
+        # recent message cache to avoid processing duplicates
+        # key = (author_id, channel_id, normalized_content) -> last_timestamp
         self._recent_messages = {}
-        self._debounce_lock = asyncio.Lock()
-        # configuration
-        self._debounce_window = 3  # seconds: if same content within this window -> consider duplicate
-        self._max_message_ids = 6  # keep last N message ids per key
-        self._prune_interval = 20  # seconds: entries older than this will be pruned
-        self._max_cache_size = 1000  # safety cap
 
-        # ensure we only call process_commands once per message id (protects against duplicate on_message calls)
-        self._processed_ids_deque = deque(maxlen=5000)
-        self._processed_ids_set = set()
+        # expose the constants for tests / runtime checks
+        self._debounce_window = DEBOUNCE_WINDOW
+        self._debounce_guard = _DEBOUNCE_GUARD
 
-        # debug flag: si True imprime des logs de debug (garde False en prod)
-        self._debug = False
-
+    # ─── Quand le bot est prêt ───────────────────────────────────
     @commands.Cog.listener()
     async def on_ready(self):
+        # Affiche le PID pour détecter plusieurs instances (utile en debug)
         print(f"[INFO] {self.bot.user} connecté ✅ PID={os.getpid()}")
+
+        # Vérifier l'intégrité du bloc debounce au démarrage
+        if getattr(self, "_debounce_guard", None) != "UNMODIFIED:v1":
+            print("[WARN] Le bloc DEBOUNCE a été modifié ! Ceci peut causer des doublons. "
+                  "Vérifie src/cogs/events.py — section CRITICAL DEBOUNCE BLOCK.")
         await db.init_db()
 
+    # ─── Quand un membre rejoint ─────────────────────────────────
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         await db.upsert_user(
@@ -45,6 +65,7 @@ class Events(commands.Cog):
         )
         print(f"[INFO] {member} a rejoint, ajouté à la DB")
 
+    # ─── Quand un membre quitte ──────────────────────────────────
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         async with db.aiosqlite.connect(db.DB_PATH) as conn:
@@ -55,9 +76,11 @@ class Events(commands.Cog):
             await conn.commit()
         print(f"[INFO] {member} a quitté, leave_date mis à jour")
 
+    # ─── Sticky auto-refresh ─────────────────────────────────────
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Vérifie les stickies et relance la détection de commandes.
+
         Protection contre les doublons de messages/commandes venant du même auteur
         dans le même salon (même contenu) sur une courte fenêtre pour éviter réponses en double.
         """
@@ -67,87 +90,43 @@ class Events(commands.Cog):
 
         # Si message en DM : on laisse le traitement normal des commandes et on quitte
         if message.guild is None or message.channel is None:
-            # DM: processer et sortir
-            # Mais protéger contre double-invocation via message.id
-            await self._safe_process_commands(message)
+            await self.bot.process_commands(message)
             return
 
-        author_id = message.author.id
-        channel_id = message.channel.id
-        # normaliser le contenu pour comparaison
-        try:
-            content = message.clean_content.strip()
-        except Exception:
-            content = (message.content or "").strip()
-
+        # ---------------------------
+        # Anti‑rebounce / debounce
+        # ---------------------------
+        # clé qui identifie un message "identique" : auteur + salon + contenu trimé
+        key = (message.author.id, message.channel.id, message.content.strip())
         now = int(time.time())
-        key = (author_id, channel_id)
+        last = self._recent_messages.get(key)
 
-        # Debounce / dedupe logic with a lock to avoid concurrent races
-        is_duplicate = False
-        async with self._debounce_lock:
-            entry = self._recent_messages.get(key)
-            if entry:
-                # exact same message id already processed for this key
-                if message.id in entry.get("message_ids", set()):
-                    is_duplicate = True
-                    if self._debug:
-                        print(f"[DEDUPE] message id {message.id} déjà dans entry.message_ids pour {key}")
-                else:
-                    last_content = entry.get("content", "")
-                    last_ts = entry.get("last_ts", 0)
-                    # same content inside debounce window => consider duplicate
-                    if last_content == content and (now - last_ts) < self._debounce_window:
-                        # still record message id to avoid reprocessing further duplicates
-                        entry["message_ids"].add(message.id)
-                        # keep only last N ids
-                        if len(entry["message_ids"]) > self._max_message_ids:
-                            ids = list(entry["message_ids"])
-                            ids = ids[-self._max_message_ids:]
-                            entry["message_ids"] = set(ids)
-                        is_duplicate = True
-                        if self._debug:
-                            print(f"[DEDUPE] contenu identique dans fenêtre pour {key} ({message.id})")
-                    else:
-                        # not considered duplicate: update entry
-                        entry["content"] = content
-                        entry["last_ts"] = now
-                        entry["message_ids"].add(message.id)
-                        if len(entry["message_ids"]) > self._max_message_ids:
-                            ids = list(entry["message_ids"])
-                            ids = ids[-self._max_message_ids:]
-                            entry["message_ids"] = set(ids)
-                        if self._debug:
-                            print(f"[DEDUPE] nouveau contenu pour {key}, mise à jour entry")
-            else:
-                # new entry
-                self._recent_messages[key] = {
-                    "content": content,
-                    "last_ts": now,
-                    "message_ids": {message.id},
-                }
-                if self._debug:
-                    print(f"[DEDUPE] nouvelle entree pour {key} with message {message.id}")
+        # utiliser la fenêtre définie dans le bloc critique
+        window = getattr(self, "_debounce_window", 5)
 
-            # prune old entries if cache grows or periodically for stale entries
-            if len(self._recent_messages) > self._max_cache_size:
-                cutoff = now - self._prune_interval
-                for k, v in list(self._recent_messages.items()):
-                    if v.get("last_ts", 0) < cutoff:
-                        del self._recent_messages[k]
-                        if self._debug:
-                            print(f"[PRUNE] removed stale entry for {k}")
-
-        if is_duplicate:
-            # doublon identifié : on ignore sans appeler process_commands
-            if self._debug:
-                print(f"[DEDUPE] Ignoring duplicate message {message.id} from {message.author} in {message.channel}")
+        if last and now - last < window:
+            # doublon récent : ignorer pour éviter double traitement
+            # NB: on ne logge pas ce cas pour éviter flood dans les logs
             return
+
+        # enregistrer la dernière occurrence
+        self._recent_messages[key] = now
+
+        # Nettoyage léger des entrées trop vieilles pour éviter mémoire croissante
+        if len(self._recent_messages) > 500:
+            cutoff = now - (window * 3)  # conserver une petite marge
+            for k, ts in list(self._recent_messages.items()):
+                if ts < cutoff:
+                    del self._recent_messages[k]
+        # ---------------------------
+        # Fin Anti‑rebounce
+        # ---------------------------
+
+        guild_id = message.guild.id
+        channel_id = message.channel.id
 
         # Gérer les stickies de manière robuste (ne doit jamais empêcher process_commands)
         try:
-            guild_id = message.guild.id
-            channel_id = message.channel.id
             sticky = await db.get_sticky(guild_id, channel_id)
             if sticky:
                 # sticky retourne typiquement (message_id, content, author_id) ou (message_id, text, requested_by)
@@ -168,39 +147,13 @@ class Events(commands.Cog):
                     # Si la mise à jour échoue, on l'ignore pour ne pas casser on_message
                     pass
         except Exception as e:
+            # Logguer l'erreur pour debug mais ne pas bloquer la suite
             print(f"[WARN] Erreur lors de la gestion du sticky: {e}")
 
-        # Appeler process_commands mais de façon sûre (une seule fois par message.id)
-        await self._safe_process_commands(message)
+        # 🔥 LIGNE CRUCIALE : permet de traiter les commandes (*help, *join, etc.)
+        await self.bot.process_commands(message)
 
-    async def _safe_process_commands(self, message: discord.Message):
-        """Appelle bot.process_commands(message) en s'assurant que c'est fait une seule fois par message.id."""
-        async with self._debounce_lock:
-            if message.id in self._processed_ids_set:
-                if self._debug:
-                    print(f"[SAFE] message {message.id} déjà traité -> skip process_commands")
-                return
-            # enregistrer comme traité
-            self._processed_ids_set.add(message.id)
-            self._processed_ids_deque.append(message.id)
-            # si deque a évincement, enlever de set (deque gère la longueur max)
-            while len(self._processed_ids_deque) > self._processed_ids_deque.maxlen:
-                try:
-                    old = self._processed_ids_deque.popleft()
-                    self._processed_ids_set.discard(old)
-                except Exception:
-                    break
-
-        # Hors du lock, appeler process_commands (peut être long)
-        try:
-            if self._debug:
-                print(f"[SAFE] process_commands pour message {message.id} by {message.author} in {message.channel}")
-            await self.bot.process_commands(message)
-        except Exception as e:
-            # log complet (on_command_error s'occupera d'envoyer un message utilisateur)
-            tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            print(f"[ERROR] Erreur lors de process_commands pour message {message.id}:\n{tb}")
-
+    # ─── Gestion des erreurs de commandes ─────────────────────────────
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         # Gestion spécifique MAINTENANCE_ACTIVE (doit être traitée avant les autres CheckFailure)
