@@ -30,7 +30,6 @@ def in_pomodoro_channel():
             if int(pomodoro_channel_id) == ctx.channel.id:
                 return True
         except Exception:
-            # stored value not an int or mismatch — fallthrough to failure
             pass
 
         raise commands.CheckFailure("NO_POMODORO_CHANNEL")
@@ -43,7 +42,6 @@ def roles_are_set():
             raise commands.CheckFailure("NO_POMODORO_ROLES")
         guild_id = ctx.guild.id
 
-        # Lire les valeurs (peuvent être ID stocké comme string ou nom)
         role_a_val = await db.get_setting(f"role_A_{guild_id}", default=None)
         role_b_val = await db.get_setting(f"role_B_{guild_id}", default=None)
 
@@ -55,7 +53,6 @@ def roles_are_set():
         def resolve_role(val):
             if not val:
                 return None
-            # Essayer par ID si possible
             try:
                 rid = int(str(val))
                 role = ctx.guild.get_role(rid)
@@ -63,7 +60,6 @@ def roles_are_set():
                     return role
             except Exception:
                 pass
-            # Sinon essayer par nom
             return discord.utils.get(ctx.guild.roles, name=val)
 
         role_a = resolve_role(role_a_val)
@@ -81,11 +77,9 @@ def not_in_maintenance():
         if ctx.guild is not None:
             is_maint = await db.get_maintenance(ctx.guild.id)
             if is_maint:
-                # CheckFailure spécifique (géré dans on_command_error)
                 raise commands.CheckFailure("MAINTENANCE_ACTIVE")
             return True
 
-        # Fallback pour DM / contexte sans guild
         val = await db.get_setting("maintenance", default="0")
         if val == "1":
             raise commands.CheckFailure("MAINTENANCE_ACTIVE")
