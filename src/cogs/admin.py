@@ -3,11 +3,15 @@
 # ==========================
 import discord
 from discord.ext import commands
-import asyncio
 from datetime import datetime, timezone
-from core import db
+import asyncio
 from utils import checks
 
+from core import db
+from utils.time_format import format_seconds
+
+POMO_ROLE_A = "Mode A"
+POMO_ROLE_B = "Mode B"
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):
@@ -22,25 +26,16 @@ class AdminCog(commands.Cog):
 
         guild_id = ctx.guild.id
 
-        # Participants (si la fonction existe)
-        try:
-            participants = await db.get_participants(guild_id)
-            countA = len([p for p in participants if p[2] == "A"])
-            countB = len([p for p in participants if p[2] == "B"])
-        except Exception:
-            # si get_participants n'existe plus / échoue, on affiche NA
-            countA = "N/A"
-            countB = "N/A"
+        # Participants
+        participants = await db.get_participants(guild_id)
+        countA = len([p for p in participants if p[2] == "A"])
+        countB = len([p for p in participants if p[2] == "B"])
 
         # Salon Pomodoro (essayer clé par-guild puis global)
         pomodoro_channel_id = await db.get_setting(f"pomodoro_channel_{guild_id}", default=None)
         if pomodoro_channel_id is None:
             pomodoro_channel_id = await db.get_setting("channel_id", default=None)
-        chan = None
-        try:
-            chan = ctx.guild.get_channel(int(pomodoro_channel_id)) if pomodoro_channel_id else None
-        except Exception:
-            chan = None
+        chan = ctx.guild.get_channel(int(pomodoro_channel_id)) if pomodoro_channel_id else None
         chan_field = f"✅ {chan.mention}" if chan else "❌ non configuré"
 
         # Rôles : on résout par ID stocké en DB (ou nom)
@@ -70,17 +65,14 @@ class AdminCog(commands.Cog):
         roleA_field = resolve_display(roleA_val)
         roleB_field = resolve_display(roleB_val)
 
-        # Git SHA (tentative)
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                "git rev-parse --short HEAD",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
-            )
-            out, _ = await proc.communicate()
-            sha = out.decode().strip() if out else "unknown"
-        except Exception:
-            sha = "unknown"
+        # Git SHA
+        proc = await asyncio.create_subprocess_shell(
+            "git rev-parse --short HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        out, _ = await proc.communicate()
+        sha = out.decode().strip() if out else "unknown"
 
         e = discord.Embed(title="⚙️ État du bot", color=discord.Color.blue())
         e.add_field(name="Latence", value=f"{latency} ms", inline=True)
@@ -94,7 +86,69 @@ class AdminCog(commands.Cog):
 
         await ctx.send(embed=e)
 
-    @commands.command(name="defa", help="Définir ou créer le rôle A")
+
+    @commands.command(name="maintenance", help="Activer ou désactiver le mode maintenance")
+    @checks.is_admin()
+    async def maintenance(self, ctx):
+        guild_id = ctx.guild.id
+        enabled = not await db.get_maintenance(guild_id)
+        await db.set_maintenance(guild_id, enabled)
+
+        if enabled:
+            participants = await db.get_participants(guild_id)
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+
+            # si participants présents = une seule notif listant les mentions
+            if participants:
+                pomodoro_channel_id = await db.get_setting(f"pomodoro_channel_{guild_id}", default=None)
+                if pomodoro_channel_id is None:
+                    pomodoro_channel_id = await db.get_setting("channel_id", default=None)
+                channel = ctx.guild.get_channel(int(pomodoro_channel_id)) if pomodoro_channel_id else None
+
+                mentions = " ".join(f"<@{user_id}>" for user_id, _, _, _ in participants)
+                notif_msg = f"🚧 Mode maintenance activé — toutes les sessions ont été arrêtées.\nParticipants retirés : {mentions}"
+
+                try:
+                    if channel:
+                        await channel.send(notif_msg)
+                    else:
+                        await ctx.send(notif_msg)
+                except Exception:
+                    pass
+
+            # archiver et supprimer
+            for user_id, join_ts, mode, _ in participants:
+                elapsed = now_ts - join_ts
+                await db.ajouter_temps(user_id, guild_id, elapsed, mode=mode, is_session_end=True)
+                try:
+                    await db.remove_participant(guild_id, user_id)
+                except Exception:
+                    pass
+
+            if not participants:
+                await ctx.send("🚧 Mode maintenance activé. Aucune session en cours.")
+            else:
+                # déjà notifié les participants
+                pass
+        else:
+            await ctx.send("✅ Mode maintenance désactivé.")
+
+
+    @commands.command(name="defs", help="Définir le salon Pomodoro")
+    @checks.is_admin()
+    async def defs(self, ctx, channel: discord.TextChannel = None):
+        channel = channel or ctx.channel
+        await db.set_setting(f"pomodoro_channel_{ctx.guild.id}", str(channel.id))
+
+        e = discord.Embed(
+            title="⚙️ Configuration mise à jour",
+            description=f"Le salon Pomodoro est maintenant {channel.mention}.",
+            color=discord.Color.green()
+        )
+        await ctx.send(embed=e)
+
+
+    @commands.command(name="defa", help="Définir ou créer le rôle Pomodoro A")
     @checks.is_admin()
     async def defa(self, ctx, *, role_name: str = None):
         guild_id = ctx.guild.id
@@ -123,7 +177,8 @@ class AdminCog(commands.Cog):
         )
         await ctx.send(embed=e)
 
-    @commands.command(name="defb", help="Définir ou créer le rôle B")
+
+    @commands.command(name="defb", help="Définir ou créer le rôle Pomodoro B")
     @checks.is_admin()
     async def defb(self, ctx, *, role_name: str = None):
         guild_id = ctx.guild.id
@@ -152,6 +207,7 @@ class AdminCog(commands.Cog):
         )
         await ctx.send(embed=e)
 
+
     @commands.command(name="colle", help="Créer un sticky message")
     @checks.is_admin()
     async def colle(self, ctx, *, message: str):
@@ -165,11 +221,7 @@ class AdminCog(commands.Cog):
                 await old_msg.delete()
             except Exception:
                 pass
-            try:
-                await db.remove_sticky(guild_id, channel_id)
-            except Exception:
-                # si la suppression en DB échoue, on continue (on écrasera potentiellement)
-                pass
+            await db.remove_sticky(guild_id, channel_id)
 
         sticky_msg = await ctx.send(message)
         try:
@@ -186,50 +238,27 @@ class AdminCog(commands.Cog):
 
         await ctx.send("✅ Sticky créé et enregistré.")
 
-    @commands.command(name="decoller", aliases=["décoller", "decolle"], help="Retirer un sticky message")
+
+    @commands.command(name="decoller", help="Retirer un sticky message")
     @checks.is_admin()
     async def decoller(self, ctx):
         guild_id = ctx.guild.id
         channel_id = ctx.channel.id
 
-        # Récupérer le sticky de la DB en gérant les erreurs DB
-        try:
-            existing = await db.get_sticky(guild_id, channel_id)
-        except Exception as e:
-            print(f"[ERROR] decoller: impossible de lire le sticky en DB pour guild {guild_id} channel {channel_id}: {e}")
-            await ctx.send("⚠️ Impossible de vérifier le sticky en base de données. Consulte les logs côté serveur.")
-            return
-
+        existing = await db.get_sticky(guild_id, channel_id)
         if not existing:
             await ctx.send("ℹ️ Aucun sticky défini pour ce salon.")
             return
 
-        # existing peut être (message_id, content, author_id) ou (message_id, text, requested_by)
-        message_id = None
         try:
-            # essayer de normaliser en int si possible
-            message_id = int(existing[0])
+            old_msg = await ctx.channel.fetch_message(existing[0])
+            await old_msg.delete()
         except Exception:
-            message_id = None
+            pass
 
-        # Supprimer le message sticky si possible (ne doit pas faire échouer la commande en cas d'erreur)
-        if message_id:
-            try:
-                old_msg = await ctx.channel.fetch_message(message_id)
-                await old_msg.delete()
-            except Exception as e:
-                # message introuvable ou déjà supprimé => logguer mais continuer
-                print(f"[WARN] decoller: impossible de supprimer le message sticky {message_id} dans channel {channel_id}: {e}")
-
-        # Supprimer en base (essentiel)
-        try:
-            await db.remove_sticky(guild_id, channel_id)
-        except Exception as e:
-            print(f"[ERROR] decoller: échec suppression sticky DB pour guild {guild_id} channel {channel_id}: {e}")
-            await ctx.send("⚠️ Échec lors de la suppression du sticky en base. Consulte les logs côté serveur.")
-            return
-
+        await db.remove_sticky(guild_id, channel_id)
         await ctx.send("✅ Sticky retiré.")
+
 
     @commands.command(name="clear_stats", help="Réinitialiser toutes les stats")
     @checks.is_admin()
@@ -242,6 +271,7 @@ class AdminCog(commands.Cog):
             color=discord.Color.red()
         )
         await ctx.send(embed=e)
+
 
     @commands.command(name="update", help="Mettre à jour et redémarrer le bot (désactivée)")
     @checks.is_admin()
