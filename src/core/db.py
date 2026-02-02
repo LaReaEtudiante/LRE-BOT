@@ -4,7 +4,6 @@
 import aiosqlite
 import sqlite3
 import time
-import os
 from pathlib import Path
 from core import config
 
@@ -34,7 +33,6 @@ async def init_db():
         await db.commit()
     print(f"[DB] Initialisation effectuée ({DB_PATH}).")
 
-
 # ---- Settings helpers -----------------------------------------------------
 async def get_setting(key: str, default=None, cast=None):
     try:
@@ -62,6 +60,24 @@ async def set_setting(key: str, value):
     except Exception as e:
         print(f"[DB] set_setting({key}) failed: {e}")
 
+# Convenience maintenance getters/setters
+async def set_maintenance(guild_id: int, enabled: bool):
+    """
+    Stocke maintenance per-guild as maintenance_{guild_id} = "1" or "0"
+    """
+    try:
+        await set_setting(f"maintenance_{guild_id}", "1" if enabled else "0")
+    except Exception as e:
+        print(f"[DB] set_maintenance({guild_id}) failed: {e}")
+
+async def get_maintenance(guild_id: int):
+    try:
+        val = await get_setting(f"maintenance_{guild_id}", default="0")
+        return str(val) == "1"
+    except Exception as e:
+        print(f"[DB] get_maintenance({guild_id}) failed: {e}")
+        return False
+
 # ---- Users / sessions -----------------------------------------------------
 async def upsert_user(user_id: int, username: str, join_date: int = None):
     join_date = join_date or now_ts()
@@ -80,10 +96,6 @@ async def upsert_user(user_id: int, username: str, join_date: int = None):
         print(f"[DB] upsert_user({user_id}) failed: {e}")
 
 async def get_user(user_id: int, guild_id: int = None):
-    """
-    Retourne un dict minimal avec champs usuels si présent, sinon None.
-    Ne jette pas en cas d'erreur.
-    """
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cur = await db.execute("SELECT total_time, total_A, total_B, sessions_count, streak_current, streak_best FROM users WHERE user_id=?", (user_id,))
@@ -104,35 +116,21 @@ async def get_user(user_id: int, guild_id: int = None):
 
 # ---- Participants table helpers -------------------------------------------
 async def add_participant(guild_id: int, user_id: int, mode: str) -> bool:
-    """
-    Ajoute un participant si non présent. Retourne True si ajouté, False si déjà présent.
-    """
     ts = now_ts()
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # table participants peut être (guild_id, user_id, join_ts, mode, validated)
             try:
-                cur = await db.execute(
-                    "SELECT 1 FROM participants WHERE guild_id=? AND user_id=?",
-                    (guild_id, user_id),
-                )
+                cur = await db.execute("SELECT 1 FROM participants WHERE guild_id=? AND user_id=?", (guild_id, user_id))
                 if await cur.fetchone():
                     return False
-                await db.execute(
-                    "INSERT INTO participants (guild_id, user_id, join_ts, mode, validated) VALUES (?, ?, ?, ?, ?)",
-                    (guild_id, user_id, ts, mode, 0),
-                )
+                await db.execute("INSERT INTO participants (guild_id, user_id, join_ts, mode, validated) VALUES (?, ?, ?, ?, ?)", (guild_id, user_id, ts, mode, 0))
                 await db.commit()
                 return True
             except Exception:
-                # fallback ancien schéma sans guild_id: (user_id, join_ts, mode, validated)
                 cur = await db.execute("SELECT 1 FROM participants WHERE user_id=?", (user_id,))
                 if await cur.fetchone():
                     return False
-                await db.execute(
-                    "INSERT INTO participants (user_id, join_ts, mode, validated) VALUES (?, ?, ?, ?)",
-                    (user_id, ts, mode, 0),
-                )
+                await db.execute("INSERT INTO participants (user_id, join_ts, mode, validated) VALUES (?, ?, ?, ?)", (user_id, ts, mode, 0))
                 await db.commit()
                 return True
     except Exception as e:
@@ -140,45 +138,31 @@ async def add_participant(guild_id: int, user_id: int, mode: str) -> bool:
         return False
 
 async def get_participants(guild_id: int):
-    """
-    Retourne une liste de tuples (user_id, join_ts, mode, validated).
-    Si la table/colonne manque, renvoie [] mais logge.
-    """
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # essayer le schéma récent
             try:
                 cur = await db.execute("SELECT user_id, join_ts, mode, validated FROM participants WHERE guild_id=?", (guild_id,))
                 rows = await cur.fetchall()
                 return rows or []
             except Exception:
-                # fallback ancienne table sans guild_id
                 cur = await db.execute("SELECT user_id, join_ts, mode, validated FROM participants")
                 rows = await cur.fetchall()
-                # filtrer ceux qui appartiennent à la guild si on ne peut pas savoir => renvoyer tous (sécurité: caller traitera)
                 return rows or []
     except Exception as e:
         print(f"[DB] get_participants({guild_id}) failed: {e}")
         return []
 
 async def remove_participant(guild_id: int, user_id: int):
-    """
-    Supprime et retourne (join_ts, mode) si trouvé ; sinon retourne None.
-    Gère schéma avec ou sans guild_id.
-    """
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # try recent schema
             try:
                 cur = await db.execute("SELECT join_ts, mode FROM participants WHERE guild_id=? AND user_id=?", (guild_id, user_id))
                 row = await cur.fetchone()
                 if not row:
-                    # fallback: try without guild
                     cur = await db.execute("SELECT join_ts, mode FROM participants WHERE user_id=?", (user_id,))
                     row = await cur.fetchone()
                 if not row:
                     return None
-                # delete any matching rows
                 try:
                     await db.execute("DELETE FROM participants WHERE guild_id=? AND user_id=?", (guild_id, user_id))
                 except Exception:
@@ -186,7 +170,6 @@ async def remove_participant(guild_id: int, user_id: int):
                 await db.commit()
                 return (row[0], row[1])
             except Exception:
-                # fallback simple
                 cur = await db.execute("SELECT join_ts, mode FROM participants WHERE user_id=?", (user_id,))
                 row = await cur.fetchone()
                 if not row:
@@ -200,26 +183,18 @@ async def remove_participant(guild_id: int, user_id: int):
 
 # ---- Time aggregation (ajouter_temps) ------------------------------------
 async def ajouter_temps(user_id: int, guild_id: int, elapsed: int, mode: str = "A", is_session_end: bool = False):
-    """
-    Ajoute du temps à l'utilisateur. Cette fonction tente de mettre à jour
-    la table users avec différents noms de colonnes selon le schéma.
-    """
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # essayer mise à jour colonnes attendues
             try:
-                # assurer existence row
                 cur = await db.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
                 if not await cur.fetchone():
                     await db.execute("INSERT INTO users (user_id, username, join_date) VALUES (?, ?, ?)", (user_id, "", now_ts()))
-                # increment total_time
                 await db.execute("UPDATE users SET total_time = COALESCE(total_time,0) + ? WHERE user_id=?", (elapsed, user_id))
                 if mode == "A":
                     await db.execute("UPDATE users SET total_A = COALESCE(total_A,0) + ? WHERE user_id=?", (elapsed, user_id))
                 else:
                     await db.execute("UPDATE users SET total_B = COALESCE(total_B,0) + ? WHERE user_id=?", (elapsed, user_id))
                 if is_session_end:
-                    # increment sessions_count if column exists
                     try:
                         await db.execute("UPDATE users SET sessions_count = COALESCE(sessions_count,0) + 1 WHERE user_id=?", (user_id,))
                     except Exception:
@@ -227,7 +202,6 @@ async def ajouter_temps(user_id: int, guild_id: int, elapsed: int, mode: str = "
                 await db.commit()
                 return True
             except Exception:
-                # fallback minimal: try a generic time column
                 try:
                     await db.execute("UPDATE users SET total_time = COALESCE(total_time,0) + ? WHERE user_id=?", (elapsed, user_id))
                     await db.commit()
@@ -238,11 +212,8 @@ async def ajouter_temps(user_id: int, guild_id: int, elapsed: int, mode: str = "
         print(f"[DB] ajouter_temps({user_id}) failed: {e}")
         return False
 
-# ---- Stickies (déjà discuté) ---------------------------------------------
+# ---- Stickies -------------------------------------------------------------
 async def set_sticky(guild_id: int, channel_id: int, message_id: int, content: str, author_id: int):
-    """
-    Remplace le sticky pour le salon donné (garantit 1 sticky par salon).
-    """
     async with aiosqlite.connect(DB_PATH) as db:
         try:
             await db.execute("DELETE FROM stickies WHERE guild_id=? AND channel_id=?", (guild_id, channel_id))
@@ -254,16 +225,10 @@ async def set_sticky(guild_id: int, channel_id: int, message_id: int, content: s
             pass
 
         try:
-            await db.execute(
-                "INSERT INTO stickies (guild_id, channel_id, message_id, content, author_id) VALUES (?, ?, ?, ?, ?)",
-                (guild_id, channel_id, message_id, content, author_id),
-            )
+            await db.execute("INSERT INTO stickies (guild_id, channel_id, message_id, content, author_id) VALUES (?, ?, ?, ?, ?)", (guild_id, channel_id, message_id, content, author_id))
         except Exception:
             try:
-                await db.execute(
-                    "INSERT OR REPLACE INTO stickies (channel_id, message_id, text, requested_by) VALUES (?, ?, ?, ?)",
-                    (channel_id, message_id, content, author_id),
-                )
+                await db.execute("INSERT OR REPLACE INTO stickies (channel_id, message_id, text, requested_by) VALUES (?, ?, ?, ?)", (channel_id, message_id, content, author_id))
             except Exception as e:
                 print(f"[DB] set_sticky fallback insert failed: {e}")
         await db.commit()
@@ -295,23 +260,17 @@ async def remove_sticky(guild_id: int, channel_id: int):
             pass
         await db.commit()
 
-# ---- Leaderboards & stats (basic safe implementations) --------------------
+# ---- Leaderboards & stats ----------------------------------------------
 async def get_leaderboards(guild_id: int):
-    """
-    Retourne un dictionnaire de classements. Implémentation sûre, retourne vide si tables manquent.
-    Format : {title: [(user_id, value), ...], ...}
-    """
     lbs = {}
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # Ex : top temps total
             try:
                 cur = await db.execute("SELECT user_id, total_time FROM users ORDER BY total_time DESC LIMIT 10")
                 rows = await cur.fetchall()
                 lbs["Temps total"] = rows
             except Exception:
                 lbs["Temps total"] = []
-            # Ex : top sessions_count
             try:
                 cur = await db.execute("SELECT user_id, sessions_count FROM users ORDER BY sessions_count DESC LIMIT 10")
                 rows = await cur.fetchall()
@@ -323,9 +282,6 @@ async def get_leaderboards(guild_id: int):
     return lbs
 
 async def get_server_stats(guild_id: int):
-    """
-    Retourne un dict minimal pour stats serveur.
-    """
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             cur = await db.execute("SELECT COUNT(DISTINCT user_id) FROM users")
@@ -348,9 +304,6 @@ async def clear_all_stats(guild_id: int = None):
         print(f"[DB] clear_all_stats failed: {e}")
 
 async def get_active_session(guild_id: int, user_id: int):
-    """
-    Retourne (join_ts, mode) si session en cours, sinon None.
-    """
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             try:
@@ -364,3 +317,4 @@ async def get_active_session(guild_id: int, user_id: int):
     except Exception as e:
         print(f"[DB] get_active_session failed: {e}")
     return None
+<END_FILE>
