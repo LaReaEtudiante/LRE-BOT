@@ -33,6 +33,8 @@ class LREBot(commands.Bot):
                 print(f"[COG] ✅ {cog} chargé")
             except Exception as e:
                 print(f"[COG] ❌ Erreur lors du chargement de {cog} : {e}")
+                import traceback
+                traceback.print_exc()  # Afficher l'erreur complète
         
         print("[INFO] Tous les Cogs ont été traités.")
 
