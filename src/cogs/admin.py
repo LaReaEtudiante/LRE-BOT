@@ -144,11 +144,5 @@ class AdminCog(commands.Cog):
         await ctx.send(embed=e)
 
 
-    @commands.command(name="update", help="Mettre à jour et redémarrer le bot (désactivée)")
-    @checks.is_admin()
-    async def update(self, ctx):
-        await ctx.send("❌ La commande `update` est désactivée sur ce serveur. Mettez à jour manuellement sur le serveur.")
-
-
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
