@@ -12,27 +12,10 @@ class UserCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-# ─── Help ───────────────────────────────────────────────
+    # ─── Help ───────────────────────────────────────────────
     @commands.command(name="help", help="Afficher la liste des commandes")
     async def help_command(self, ctx: commands.Context):
         prefix = ctx.prefix
-        # Vérifications de config (support fallback keys)
-        role_a = await db.get_setting(f"role_A_{ctx.guild.id}", default=None) or await db.get_setting("pomodoro_role_A", default=None)
-        role_b = await db.get_setting(f"role_B_{ctx.guild.id}", default=None) or await db.get_setting("pomodoro_role_B", default=None)
-        channel_id = await db.get_setting(f"pomodoro_channel_{ctx.guild.id}", default=None) or await db.get_setting("channel_id", default=None)
-
-        if not role_a or not role_b or not channel_id:
-            if ctx.author.guild_permissions.administrator:
-                await ctx.send(
-                    "⚠️ Le bot n’est pas encore configuré correctement.\n"
-                    "➡️ Tapez `*status` pour voir les étapes de configuration."
-                )
-            else:
-                await ctx.send(
-                    "⚠️ Le bot n’est pas encore configuré correctement.\n"
-                    "➡️ Merci de contacter un administrateur."
-                )
-            return
 
         e = discord.Embed(
             title="📖 Aide - Commandes disponibles",
@@ -48,7 +31,6 @@ class UserCommands(commands.Cog):
                 f"{prefix}me — voir vos stats détaillées\n"
                 f"{prefix}stats — statistiques du serveur\n"
                 f"{prefix}leaderboard — classements divers\n"
-                f"{prefix}status — voir l’état global du bot\n"
             ),
             inline=False
         )
@@ -57,9 +39,7 @@ class UserCommands(commands.Cog):
             name="🛠️ Administrateurs",
             value=(
                 f"{prefix}maintenance — dés/activer le mode maintenance\n"
-                f"{prefix}defs — définir le salon Pomodoro\n"
-                f"{prefix}defa — définir ou créer le rôle A\n"
-                f"{prefix}defb — définir ou créer le rôle B\n"
+                f"{prefix}status — voir l'état global du bot\n"
                 f"{prefix}colle — coller un sticky message\n"
                 f"{prefix}decoller — retirer un sticky message\n"
                 f"{prefix}clear_stats — réinitialiser toutes les stats\n"
@@ -68,42 +48,10 @@ class UserCommands(commands.Cog):
             inline=False
         )
 
-        # --- Protection anti-doublon côté sortie ---
-        try:
-            # Parcourir l'historique récente du salon pour trouver un message du bot ayant le même embed
-            async for m in ctx.channel.history(limit=12, oldest_first=False):
-                if m.author and m.author.id == ctx.bot.user.id:
-                    # ne considérer que les messages avec embed
-                    if not m.embeds:
-                        continue
-                    emb = m.embeds[0]
-                    # comparer titre et nombre de champs
-                    if emb.title == e.title and len(emb.fields) == len(e.fields):
-                        # comparer chaque champ (name + value)
-                        identical = True
-                        for i, f in enumerate(e.fields):
-                            try:
-                                existing_field = emb.fields[i]
-                                if existing_field.name != f.name or existing_field.value != f.value:
-                                    identical = False
-                                    break
-                            except Exception:
-                                identical = False
-                                break
-                        if identical:
-                            # message identique déjà présent : on ignore l'envoi pour éviter doublon
-                            print(f"[INFO] help_command: message d'aide identique déjà présent dans le salon {ctx.channel.id}, envoi ignoré.")
-                            return
-        except Exception as ex:
-            # En cas d'erreur lors de la vérification (permissions, etc.), on continue et on envoie l'embed normalement
-            print(f"[WARN] help_command: impossible de vérifier l'historique pour déduplication: {ex}")
-
-        await ctx.send(embed=e)    
+        await ctx.send(embed=e)
 
     # ─── Join A ─────────────────────────────────────────────
     @commands.command(name="joina", help="Rejoindre le mode A (50-10)")
-    @checks.in_pomodoro_channel()
-    @checks.roles_are_set()
     @checks.not_in_maintenance()
     async def joina(self, ctx: commands.Context):
         added = await db.add_participant(ctx.guild.id, ctx.author.id, "A")
@@ -112,10 +60,8 @@ class UserCommands(commands.Cog):
         else:
             await ctx.send(f"ℹ️ {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
 
-    # ─── Join B ──────���──────────────────────────────────────
+    # ─── Join B ─────────────────────────────────────────────
     @commands.command(name="joinb", help="Rejoindre le mode B (25-5)")
-    @checks.in_pomodoro_channel()
-    @checks.roles_are_set()
     @checks.not_in_maintenance()
     async def joinb(self, ctx: commands.Context):
         added = await db.add_participant(ctx.guild.id, ctx.author.id, "B")
@@ -126,13 +72,11 @@ class UserCommands(commands.Cog):
 
     # ─── Leave ──────────────────────────────────────────────
     @commands.command(name="leave", help="Quitter la session en cours")
-    @checks.in_pomodoro_channel()
-    @checks.roles_are_set()
     @checks.not_in_maintenance()
     async def leave(self, ctx: commands.Context):
         join_row = await db.remove_participant(ctx.guild.id, ctx.author.id)
         if not join_row or join_row[0] is None:
-            await ctx.send(f"🚫 {ctx.author.mention}, vous n’êtes pas inscrit.")
+            await ctx.send(f"🚫 {ctx.author.mention}, vous n'êtes pas inscrit.")
             return
 
         join_ts, mode = join_row
@@ -143,15 +87,12 @@ class UserCommands(commands.Cog):
 
     # ─── Me ────────────────────────────────────────────────
     @commands.command(name="me", help="Afficher vos stats personnelles")
-    @checks.in_pomodoro_channel()
-    @checks.roles_are_set()
-    @checks.not_in_maintenance()
     async def me(self, ctx: commands.Context):
         guild_id = ctx.guild.id
         user = await db.get_user(ctx.author.id, guild_id)
 
         if not user:
-            await ctx.send("⚠️ Vous n’avez encore aucune donnée enregistrée.")
+            await ctx.send("⚠️ Vous n'avez encore aucune donnée enregistrée.")
             return
 
         # Session en cours ?
@@ -179,9 +120,6 @@ class UserCommands(commands.Cog):
 
     # ─── Stats serveur ─────────────────────────────────────
     @commands.command(name="stats", help="Afficher les stats du serveur")
-    @checks.in_pomodoro_channel()
-    @checks.roles_are_set()
-    @checks.not_in_maintenance()
     async def stats(self, ctx: commands.Context):
         guild_id = ctx.guild.id
         stats = await db.get_server_stats(guild_id)
@@ -200,9 +138,6 @@ class UserCommands(commands.Cog):
 
     # ─── Leaderboard ───────────────────────────────────────
     @commands.command(name="leaderboard", help="Classements divers")
-    @checks.in_pomodoro_channel()
-    @checks.roles_are_set()
-    @checks.not_in_maintenance()
     async def leaderboard(self, ctx: commands.Context):
         guild_id = ctx.guild.id
         lb = await db.get_leaderboards(guild_id)
