@@ -42,18 +42,15 @@ class Events(commands.Cog):
             logger.info(f"[DEBUG on_message] → Message d'un bot, IGNORÉ")
             return
 
-        if message.guild is None or message.channel is None:
-            logger.info(f"[DEBUG on_message] → Pas de guild/channel, process_commands + return")
-            await self.bot.process_commands(message)
-            return
-
-        # Si le message commence par le préfixe de commande, on le traite immédiatement
+        # Si c'est une commande, ne rien faire ici, discord.py s'en occupe
         if message.content.startswith(self.bot.command_prefix):
-            logger.info(f"[DEBUG on_message] → Commande détectée, process_commands puis RETURN")
-            await self.bot.process_commands(message)
+            logger.info(f"[DEBUG on_message] → Commande détectée, discord.py va traiter")
             return
 
         logger.info(f"[DEBUG on_message] → Message normal (pas une commande), traitement sticky...")
+        
+        if message.guild is None or message.channel is None:
+            return
         
         guild_id = message.guild.id
         channel_id = message.channel.id
@@ -75,10 +72,6 @@ class Events(commands.Cog):
                     pass
         except Exception as e:
             logger.warning(f"Erreur lors de la gestion du sticky: {e}")
-
-        # Ce process_commands ne sera appelé que pour les messages NON-commandes
-        logger.info(f"[DEBUG on_message] → Appel final de process_commands pour message normal")
-        await self.bot.process_commands(message)
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
