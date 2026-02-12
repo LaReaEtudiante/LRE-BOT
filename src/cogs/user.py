@@ -15,6 +15,7 @@ class UserCommands(commands.Cog):
     # ─── Help ───────────────────────────────────────────────
     @commands.command(name="help", help="Afficher la liste des commandes")
     async def help_command(self, ctx: commands.Context):
+        print(f"[DEBUG COMMAND] help_command appelée par {ctx.author}")
         prefix = ctx.prefix
 
         e = discord.Embed(
@@ -47,12 +48,15 @@ class UserCommands(commands.Cog):
             inline=False
         )
 
+        print(f"[DEBUG COMMAND] help_command → Envoi de l'embed")
         await ctx.send(embed=e)
+        print(f"[DEBUG COMMAND] help_command → Embed envoyé ✅")
 
     # ─── Join A ─────────────────────────────────────────────
     @commands.command(name="joina", help="Rejoindre le mode A (50-10)")
     @checks.not_in_maintenance()
     async def joina(self, ctx: commands.Context):
+        print(f"[DEBUG COMMAND] joina appelée par {ctx.author}")
         added = await db.add_participant(ctx.guild.id, ctx.author.id, "A")
         if added:
             await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode A (50-10)** !")
@@ -63,16 +67,18 @@ class UserCommands(commands.Cog):
     @commands.command(name="joinb", help="Rejoindre le mode B (25-5)")
     @checks.not_in_maintenance()
     async def joinb(self, ctx: commands.Context):
+        print(f"[DEBUG COMMAND] joinb appelée par {ctx.author}")
         added = await db.add_participant(ctx.guild.id, ctx.author.id, "B")
         if added:
             await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode B (25-5)** !")
         else:
-            await ctx.send(f"ℹ️ {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
+            await ctx.send(f"ℹ�� {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
 
     # ─── Leave ──────────────────────────────────────────────
     @commands.command(name="leave", help="Quitter la session en cours")
     @checks.not_in_maintenance()
     async def leave(self, ctx: commands.Context):
+        print(f"[DEBUG COMMAND] leave appelée par {ctx.author}")
         join_row = await db.remove_participant(ctx.guild.id, ctx.author.id)
         if not join_row or join_row[0] is None:
             await ctx.send(f"🚫 {ctx.author.mention}, vous n'êtes pas inscrit.")
@@ -87,6 +93,7 @@ class UserCommands(commands.Cog):
     # ─── Me ────────────────────────────────────────────────
     @commands.command(name="me", help="Afficher vos stats personnelles")
     async def me(self, ctx: commands.Context):
+        print(f"[DEBUG COMMAND] me appelée par {ctx.author}")
         guild_id = ctx.guild.id
         user = await db.get_user(ctx.author.id, guild_id)
 
@@ -120,6 +127,7 @@ class UserCommands(commands.Cog):
     # ─── Stats serveur ─────────────────────────────────────
     @commands.command(name="stats", help="Afficher les stats du serveur")
     async def stats(self, ctx: commands.Context):
+        print(f"[DEBUG COMMAND] stats appelée par {ctx.author}")
         guild_id = ctx.guild.id
         stats = await db.get_server_stats(guild_id)
 
@@ -138,6 +146,7 @@ class UserCommands(commands.Cog):
     # ─── Leaderboard ───────────────────────────────────────
     @commands.command(name="leaderboard", help="Classements divers")
     async def leaderboard(self, ctx: commands.Context):
+        print(f"[DEBUG COMMAND] leaderboard appelée par {ctx.author}")
         guild_id = ctx.guild.id
         lb = await db.get_leaderboards(guild_id)
 
