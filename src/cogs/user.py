@@ -43,7 +43,6 @@ class UserCommands(commands.Cog):
                 f"{prefix}colle — coller un sticky message\n"
                 f"{prefix}decoller — retirer un sticky message\n"
                 f"{prefix}clear_stats — réinitialiser toutes les stats\n"
-                f"{prefix}update — mise à jour & redémarrage du bot\n"
             ),
             inline=False
         )
