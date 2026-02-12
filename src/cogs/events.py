@@ -13,22 +13,9 @@ class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-        # -------------------------
-        # CRITICAL DEBOUNCE BLOCK
-        # -------------------------
-        DEBOUNCE_WINDOW = 5  # secondes — NE PAS CHANGER SANS CONSENTEMENT
-        _DEBOUNCE_GUARD = "UNMODIFIED:v1"
-        # -------------------------
-
-        self._recent_messages = {}
-        self._debounce_window = DEBOUNCE_WINDOW
-        self._debounce_guard = _DEBOUNCE_GUARD
-
     @commands.Cog.listener()
     async def on_ready(self):
         print(f"[INFO] {self.bot.user} connecté ✅ PID={os.getpid()}")
-        if getattr(self, "_debounce_guard", None) != "UNMODIFIED:v1":
-            print("[WARN] Le bloc DEBOUNCE a été modifié ! Ceci peut causer des doublons.")
         await db.init_db()
 
     @commands.Cog.listener()
@@ -52,32 +39,15 @@ class Events(commands.Cog):
             await self.bot.process_commands(message)
             return
 
-        # ⚠️ CORRECTION : Ne pas bloquer les commandes avec le debounce
         # Si le message commence par le préfixe de commande, on le traite immédiatement
         if message.content.startswith(self.bot.command_prefix):
             await self.bot.process_commands(message)
             return
 
-        # Le debounce s'applique uniquement aux messages normaux (non-commandes)
-        key = (message.author.id, message.channel.id, message.content.strip())
-        now = int(time.time())
-        last = self._recent_messages.get(key)
-        window = getattr(self, "_debounce_window", 5)
-
-        if last and now - last < window:
-            return
-
-        self._recent_messages[key] = now
-
-        if len(self._recent_messages) > 500:
-            cutoff = now - (window * 3)
-            for k, ts in list(self._recent_messages.items()):
-                if ts < cutoff:
-                    del self._recent_messages[k]
-
         guild_id = message.guild.id
         channel_id = message.channel.id
 
+        # Gestion des sticky messages
         try:
             sticky = await db.get_sticky(guild_id, channel_id)
             if sticky:
@@ -105,6 +75,12 @@ class Events(commands.Cog):
             await ctx.send("❌ Tu n'as pas la permission d'utiliser cette commande.")
             return
         if isinstance(error, commands.CheckFailure):
+            if str(error) == "MAINTENANCE_ACTIVE":
+                if ctx.author.guild_permissions.administrator:
+                    await ctx.send("⚠️ Le mode maintenance est actif. Les commandes sont désactivées. Désactivez le mode maintenance avec `*maintenance` pour utiliser le bot.")
+                else:
+                    await ctx.send("⚠️ Le bot est en maintenance — les commandes sont temporairement indisponibles. Réessayez plus tard.")
+                return
             return
 
         print(f"[ERROR] {error}")
