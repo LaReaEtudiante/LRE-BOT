@@ -14,23 +14,30 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True  # nécessaire pour lire les commandes des utilisateurs
 
-# ─── Création du bot ─────────────────────────────────────────
-bot = commands.Bot(command_prefix="*", help_command=None, intents=intents)
+# ─── Création du bot avec classe personnalisée ──────────────
+class LREBot(commands.Bot):
+    def __init__(self):
+        super().__init__(
+            command_prefix="*",
+            help_command=None,
+            intents=intents
+        )
+    
+    async def setup_hook(self):
+        """Chargement automatique des Cogs au démarrage"""
+        initial_cogs = ["cogs.admin", "cogs.user", "cogs.pomodoro", "cogs.events"]
+        
+        for cog in initial_cogs:
+            try:
+                await self.load_extension(cog)
+                print(f"[COG] ✅ {cog} chargé")
+            except Exception as e:
+                print(f"[COG] ❌ Erreur lors du chargement de {cog} : {e}")
+        
+        print("[INFO] Tous les Cogs ont été traités.")
 
-# ─── Chargement automatique des Cogs ─────────────────────────
-async def _setup_hook():
-    initial_cogs = ["cogs.admin", "cogs.user", "cogs.pomodoro", "cogs.events"]
-
-    for cog in initial_cogs:
-        try:
-            await bot.load_extension(cog)
-            print(f"[COG] ✅ {cog} chargé")
-        except Exception as e:
-            print(f"[COG] ❌ Erreur lors du chargement de {cog} : {e}")
-
-    print("[INFO] Tous les Cogs ont été traités.")
-
-bot.setup_hook = _setup_hook  # <-- important pour discord.py 2.x+
+# ─── Création de l'instance du bot ──────────────────────────
+bot = LREBot()
 
 # ─── Vérification du token ───────────────────────────────────
 if not config.TOKEN:
