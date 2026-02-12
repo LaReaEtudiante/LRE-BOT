@@ -317,4 +317,3 @@ async def get_active_session(guild_id: int, user_id: int):
     except Exception as e:
         print(f"[DB] get_active_session failed: {e}")
     return None
-<END_FILE>
