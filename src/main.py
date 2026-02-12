@@ -6,6 +6,7 @@ from discord.ext import commands
 from pathlib import Path
 from core import config
 import logging
+import os
 
 # ─── Configuration du logging ────────────────────────────────
 logging.basicConfig(
@@ -27,18 +28,21 @@ intents.message_content = True
 # ─── Création du bot avec classe personnalisée ──────────────
 class LREBot(commands.Bot):
     def __init__(self):
+        logger.info(f"🔨 INIT LREBot - PID={os.getpid()}")
         super().__init__(
             command_prefix="*",
             help_command=None,
             intents=intents
         )
-    
+
     async def setup_hook(self):
         """Chargement automatique des Cogs au démarrage"""
+        logger.info(f"🪝 SETUP_HOOK appelé - PID={os.getpid()}")
+        
         initial_cogs = ["cogs.admin", "cogs.user", "cogs.pomodoro", "cogs.events"]
-        
+
         logger.info("Démarrage du bot LRE...")
-        
+
         for cog in initial_cogs:
             try:
                 await self.load_extension(cog)
@@ -47,10 +51,11 @@ class LREBot(commands.Bot):
                 logger.error(f"[COG] ❌ Erreur lors du chargement de {cog} : {e}")
                 import traceback
                 traceback.print_exc()
-        
+
         logger.info("Tous les Cogs ont été traités.")
 
 # ─── Création de l'instance du bot ──────────────────────────
+logger.info(f"📦 Création de l'instance bot - PID={os.getpid()}")
 bot = LREBot()
 
 # ─── Vérification du token ───────────────────────────────────
@@ -59,5 +64,6 @@ if not config.TOKEN:
 
 # ─── Lancement du bot ────────────────────────────────────────
 if __name__ == "__main__":
+    logger.info(f"🚀 DÉMARRAGE MAIN.PY - PID={os.getpid()}")
     logger.info("Initialisation...")
     bot.run(config.TOKEN)
