@@ -5,6 +5,16 @@ import discord
 from discord.ext import commands
 from pathlib import Path
 from core import config
+import logging
+
+# ─── Configuration du logging ────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(levelname)-8s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+logger = logging.getLogger('LRE-BOT')
 
 # ─── Vérifications & préparation du dossier DB ──────────────
 Path(config.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -12,7 +22,7 @@ Path(config.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 # ─── Intents Discord ─────────────────────────────────────────
 intents = discord.Intents.default()
 intents.members = True
-intents.message_content = True  # nécessaire pour lire les commandes des utilisateurs
+intents.message_content = True
 
 # ─── Création du bot avec classe personnalisée ──────────────
 class LREBot(commands.Bot):
@@ -27,16 +37,18 @@ class LREBot(commands.Bot):
         """Chargement automatique des Cogs au démarrage"""
         initial_cogs = ["cogs.admin", "cogs.user", "cogs.pomodoro", "cogs.events"]
         
+        logger.info("Démarrage du bot LRE...")
+        
         for cog in initial_cogs:
             try:
                 await self.load_extension(cog)
-                print(f"[COG] ✅ {cog} chargé")
+                logger.info(f"[COG] ✅ {cog} chargé")
             except Exception as e:
-                print(f"[COG] ❌ Erreur lors du chargement de {cog} : {e}")
+                logger.error(f"[COG] ❌ Erreur lors du chargement de {cog} : {e}")
                 import traceback
-                traceback.print_exc()  # Afficher l'erreur complète
+                traceback.print_exc()
         
-        print("[INFO] Tous les Cogs ont été traités.")
+        logger.info("Tous les Cogs ont été traités.")
 
 # ─── Création de l'instance du bot ──────────────────────────
 bot = LREBot()
@@ -47,5 +59,5 @@ if not config.TOKEN:
 
 # ─── Lancement du bot ────────────────────────────────────────
 if __name__ == "__main__":
-    print("[INFO] Démarrage du bot LRE...")
+    logger.info("Initialisation...")
     bot.run(config.TOKEN)
