@@ -9,12 +9,20 @@ import logging
 import os
 
 # ─── Configuration du logging ────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] [%(levelname)-8s] %(name)s: %(message)s',
+# Configurer une seule fois, sans duplication
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter(
+    '[%(asctime)s] [%(levelname)-8s] %(name)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
-)
+))
 
+# Logger racine
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.handlers.clear()  # ← IMPORTANT : Supprimer les handlers existants
+root_logger.addHandler(handler)
+
+# Logger du bot
 logger = logging.getLogger('LRE-BOT')
 
 # ─── Vérifications & préparation du dossier DB ──────────────
