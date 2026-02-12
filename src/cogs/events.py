@@ -42,7 +42,7 @@ class Events(commands.Cog):
         # Si le message commence par le préfixe de commande, on le traite immédiatement
         if message.content.startswith(self.bot.command_prefix):
             await self.bot.process_commands(message)
-            return
+            return  # ← CORRECTION : Ajouter ce return pour ne pas continuer !
 
         guild_id = message.guild.id
         channel_id = message.channel.id
@@ -65,6 +65,7 @@ class Events(commands.Cog):
         except Exception as e:
             print(f"[WARN] Erreur lors de la gestion du sticky: {e}")
 
+        # Ce process_commands ne sera appelé que pour les messages NON-commandes
         await self.bot.process_commands(message)
 
     @commands.Cog.listener()
