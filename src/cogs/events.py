@@ -7,6 +7,9 @@ import time
 import os
 import traceback
 from core import db
+import logging
+
+logger = logging.getLogger('LRE-BOT.events')
 
 
 class Events(commands.Cog):
@@ -15,42 +18,42 @@ class Events(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print(f"[INFO] {self.bot.user} connecté ✅ PID={os.getpid()}")
+        logger.info(f"{self.bot.user} connecté ✅ PID={os.getpid()}")
         await db.init_db()
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         await db.upsert_user(user_id=member.id, username=member.name, join_date=int(time.time()))
-        print(f"[INFO] {member} a rejoint, ajouté à la DB")
+        logger.info(f"{member} a rejoint, ajouté à la DB")
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         async with db.aiosqlite.connect(db.DB_PATH) as conn:
             await conn.execute("UPDATE users SET leave_date=? WHERE user_id=?", (int(time.time()), member.id))
             await conn.commit()
-        print(f"[INFO] {member} a quitté, leave_date mis à jour")
+        logger.info(f"{member} a quitté, leave_date mis à jour")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         # DEBUG : Log de chaque message reçu
-        print(f"[DEBUG on_message] Reçu: '{message.content[:60]}' | Auteur: {message.author} | Bot: {message.author.bot}")
+        logger.info(f"[DEBUG on_message] Reçu: '{message.content[:60]}' | Auteur: {message.author} | Bot: {message.author.bot}")
         
         if message.author.bot:
-            print(f"[DEBUG on_message] → Message d'un bot, IGNORÉ")
+            logger.info(f"[DEBUG on_message] → Message d'un bot, IGNORÉ")
             return
 
         if message.guild is None or message.channel is None:
-            print(f"[DEBUG on_message] → Pas de guild/channel, process_commands + return")
+            logger.info(f"[DEBUG on_message] → Pas de guild/channel, process_commands + return")
             await self.bot.process_commands(message)
             return
 
         # Si le message commence par le préfixe de commande, on le traite immédiatement
         if message.content.startswith(self.bot.command_prefix):
-            print(f"[DEBUG on_message] → Commande détectée, process_commands puis RETURN")
+            logger.info(f"[DEBUG on_message] → Commande détectée, process_commands puis RETURN")
             await self.bot.process_commands(message)
-            return  # ← Stoppe ici pour les commandes !
+            return
 
-        print(f"[DEBUG on_message] → Message normal (pas une commande), traitement sticky...")
+        logger.info(f"[DEBUG on_message] → Message normal (pas une commande), traitement sticky...")
         
         guild_id = message.guild.id
         channel_id = message.channel.id
@@ -71,10 +74,10 @@ class Events(commands.Cog):
                 except Exception:
                     pass
         except Exception as e:
-            print(f"[WARN] Erreur lors de la gestion du sticky: {e}")
+            logger.warning(f"Erreur lors de la gestion du sticky: {e}")
 
         # Ce process_commands ne sera appelé que pour les messages NON-commandes
-        print(f"[DEBUG on_message] → Appel final de process_commands pour message normal")
+        logger.info(f"[DEBUG on_message] → Appel final de process_commands pour message normal")
         await self.bot.process_commands(message)
 
     @commands.Cog.listener()
@@ -93,7 +96,7 @@ class Events(commands.Cog):
                 return
             return
 
-        print(f"[ERROR] {error}")
+        logger.error(f"{error}")
         traceback.print_exception(type(error), error, error.__traceback__)
         await ctx.send("❌ Une erreur s'est produite.")
 
