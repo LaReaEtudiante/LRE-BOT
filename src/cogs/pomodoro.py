@@ -1,74 +1,132 @@
+# ==========================
+# LRE-BOT/src/cogs/pomodoro.py
+# ==========================
 import discord
 from discord.ext import commands, tasks
-from datetime import datetime, timezone, timedelta
 from core import db
 from utils.time_format import format_seconds
+import asyncio
+import logging
+
+logger = logging.getLogger('LRE-BOT.pomodoro')
+
+# Configuration des cycles Pomodoro
+POMODORO_MODES = {
+    "A": {"work": 50 * 60, "break": 10 * 60},  # 50 min travail, 10 min pause
+    "B": {"work": 25 * 60, "break": 5 * 60}     # 25 min travail, 5 min pause
+}
 
 
-class PomodoroCog(commands.Cog):
-    """Gestion des boucles Pomodoro (modes A et B)"""
-
-    def __init__(self, bot: commands.Bot):
+class Pomodoro(commands.Cog):
+    def __init__(self, bot):
         self.bot = bot
-        self.pomodoro_loop.start()
+        self.pomodoro_task.start()
+        logger.info("🍅 Pomodoro Cog initialisé")
 
     def cog_unload(self):
-        """Arrête les tâches quand le cog est déchargé"""
-        self.pomodoro_loop.cancel()
+        self.pomodoro_task.cancel()
 
-    # ─── Configurations des phases ─────────────────────────────
-    MODES = {
-        "A": [("Travail", 50 * 60), ("Pause", 10 * 60)],
-        "B": [("Travail", 25 * 60), ("Pause", 5 * 60),
-              ("Travail", 25 * 60), ("Pause", 5 * 60)],
-    }
+    @tasks.loop(minutes=1)
+    async def pomodoro_task(self):
+        """Tâche de fond qui gère les cycles Pomodoro"""
+        logger.debug("🍅 Pomodoro task - Vérification des sessions")
+        
+        # Récupérer tous les participants actifs
+        async with db.aiosqlite.connect(db.DB_PATH) as conn:
+            async with conn.execute("""
+                SELECT guild_id, user_id, join_timestamp, mode 
+                FROM participants
+            """) as cursor:
+                participants = await cursor.fetchall()
 
-    # ─── Calcul de phase en cours ──────────────────────────────
-    @classmethod
-    def get_phase_and_remaining(cls, start_time: datetime, mode: str):
-        phases = cls.MODES.get(mode)
-        if not phases:
-            return "Inconnu", 0
+        now = db.now_ts()
 
-        elapsed = int((datetime.now(timezone.utc) - start_time).total_seconds())
-        cycle_len = sum(duration for _, duration in phases)
-        elapsed %= cycle_len
-
-        for name, duration in phases:
-            if elapsed < duration:
-                return name, duration - elapsed
-            elapsed -= duration
-
-        return "Inconnu", 0
-
-    # ─── Boucle principale ─────────────────────────────────────
-    @tasks.loop(seconds=60)
-    async def pomodoro_loop(self):
-        """Boucle qui vérifie l’état des participants toutes les minutes"""
-        for guild in self.bot.guilds:
-            participants = await db.get_participants(guild.id)
-            if not participants:
+        for guild_id, user_id, join_ts, mode in participants:
+            elapsed = now - join_ts
+            cycle = POMODORO_MODES.get(mode)
+            
+            if not cycle:
                 continue
 
-            chan_id = await db.get_setting("channel_id")
-            if not chan_id:
-                continue
+            work_duration = cycle["work"]
+            break_duration = cycle["break"]
+            total_cycle = work_duration + break_duration
 
-            channel = guild.get_channel(int(chan_id))
-            if not channel:
-                continue
+            # Calculer où on en est dans le cycle
+            position_in_cycle = elapsed % total_cycle
 
-            for user_id, join_ts, mode, validated in participants:
-                start_time = datetime.fromtimestamp(join_ts, tz=timezone.utc)
-                phase, remaining = self.get_phase_and_remaining(start_time, mode)
+            # Phase de travail terminée ?
+            if position_in_cycle >= work_duration and (position_in_cycle - 60) < work_duration:
+                # On vient de finir une phase de travail
+                try:
+                    guild = self.bot.get_guild(guild_id)
+                    if guild:
+                        member = guild.get_member(user_id)
+                        if member:
+                            # Envoyer notification de pause
+                            try:
+                                await member.send(
+                                    f"⏸️ **Pause bien méritée !**\n"
+                                    f"Tu as terminé une session de {format_seconds(work_duration)} !\n"
+                                    f"Prends {format_seconds(break_duration)} de repos. 🌟"
+                                )
+                                logger.info(f"🍅 Notification pause envoyée à {member} (mode {mode})")
+                            except discord.Forbidden:
+                                logger.warning(f"⚠️ Impossible d'envoyer un DM à {member}")
+                except Exception as e:
+                    logger.error(f"❌ Erreur lors de la notification de pause: {e}")
 
-                # Exemple: message de debug → tu peux le remplacer par un sticky
-                # await channel.send(f"🔄 {self.bot.get_user(user_id)} est en {phase}, reste {format_seconds(remaining)}")
+            # Cycle complet terminé ? (fin de pause)
+            if position_in_cycle < 60 and elapsed >= total_cycle:
+                # On vient de finir un cycle complet (travail + pause)
+                try:
+                    guild = self.bot.get_guild(guild_id)
+                    if guild:
+                        member = guild.get_member(user_id)
+                        if member:
+                            # Enregistrer le cycle complet
+                            await db.ajouter_temps(
+                                user_id=user_id,
+                                guild_id=guild_id,
+                                temps_sec=work_duration,
+                                mode=mode,
+                                is_session_end=False  # Pas encore la fin totale
+                            )
 
-    @pomodoro_loop.before_loop
-    async def before_pomodoro(self):
+                            # Enregistrer la session détaillée
+                            session_start = join_ts + (elapsed // total_cycle - 1) * total_cycle
+                            session_end = session_start + total_cycle
+                            
+                            await db.record_session(
+                                user_id=user_id,
+                                guild_id=guild_id,
+                                mode=mode,
+                                work_time=work_duration,
+                                pause_time=break_duration,
+                                start_ts=session_start,
+                                end_ts=session_end
+                            )
+
+                            # Notification de nouveau cycle
+                            try:
+                                nb_cycles = elapsed // total_cycle
+                                await member.send(
+                                    f"🔄 **Nouveau cycle !**\n"
+                                    f"C'est parti pour une nouvelle session de {format_seconds(work_duration)} !\n"
+                                    f"Cycle n°{nb_cycles + 1} 💪"
+                                )
+                                logger.info(f"🍅 Cycle {nb_cycles} terminé pour {member} (mode {mode})")
+                            except discord.Forbidden:
+                                pass
+                except Exception as e:
+                    logger.error(f"❌ Erreur lors de l'enregistrement du cycle: {e}")
+
+    @pomodoro_task.before_loop
+    async def before_pomodoro_task(self):
+        """Attendre que le bot soit prêt avant de démarrer la tâche"""
         await self.bot.wait_until_ready()
+        logger.info("🍅 Pomodoro task prête à démarrer")
 
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(PomodoroCog(bot))
+async def setup(bot):
+    await bot.add_cog(Pomodoro(bot))
