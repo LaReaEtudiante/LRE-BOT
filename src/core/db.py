@@ -65,8 +65,9 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS participants (
                 guild_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
-                join_timestamp INTEGER NOT NULL,
+                join_ts INTEGER NOT NULL,
                 mode TEXT NOT NULL,
+                validated INTEGER DEFAULT 0,
                 PRIMARY KEY (guild_id, user_id)
             )
         """)
@@ -128,7 +129,7 @@ async def add_participant(guild_id: int, user_id: int, mode: str):
     async with aiosqlite.connect(DB_PATH) as conn:
         try:
             await conn.execute("""
-                INSERT INTO participants (guild_id, user_id, join_timestamp, mode)
+                INSERT INTO participants (guild_id, user_id, join_ts, mode)
                 VALUES (?, ?, ?, ?)
             """, (guild_id, user_id, now_ts(), mode))
             await conn.commit()
@@ -141,7 +142,7 @@ async def remove_participant(guild_id: int, user_id: int):
     """Retirer un participant et retourner son temps de session"""
     async with aiosqlite.connect(DB_PATH) as conn:
         async with conn.execute("""
-            SELECT join_timestamp, mode FROM participants
+            SELECT join_ts, mode FROM participants
             WHERE guild_id = ? AND user_id = ?
         """, (guild_id, user_id)) as cursor:
             row = await cursor.fetchone()
@@ -159,7 +160,7 @@ async def get_active_session(guild_id: int, user_id: int):
     """Récupérer la session active d'un utilisateur"""
     async with aiosqlite.connect(DB_PATH) as conn:
         async with conn.execute("""
-            SELECT join_timestamp, mode FROM participants
+            SELECT join_ts, mode FROM participants
             WHERE guild_id = ? AND user_id = ?
         """, (guild_id, user_id)) as cursor:
             return await cursor.fetchone()
