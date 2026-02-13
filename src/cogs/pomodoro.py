@@ -34,7 +34,7 @@ class Pomodoro(commands.Cog):
         # Récupérer tous les participants actifs
         async with db.aiosqlite.connect(db.DB_PATH) as conn:
             async with conn.execute("""
-                SELECT guild_id, user_id, join_timestamp, mode 
+                SELECT guild_id, user_id, join_ts, mode 
                 FROM participants
             """) as cursor:
                 participants = await cursor.fetchall()
