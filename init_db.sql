@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS participants (
     join_ts INTEGER NOT NULL,
     mode TEXT NOT NULL,
     validated INTEGER DEFAULT 0,
+    last_check_ts INTEGER DEFAULT 0,
+    check_state INTEGER DEFAULT 0,
     PRIMARY KEY (guild_id, user_id)
 );
 
