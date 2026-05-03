@@ -17,6 +17,18 @@ def now_ts():
 async def init_db():
     """Initialise la base de données avec toutes les tables"""
     async with aiosqlite.connect(DB_PATH) as conn:
+        # --- VERIFICATION MIGRATION ---
+        async with conn.execute("PRAGMA table_info(users)") as cursor:
+            columns = await cursor.fetchall()
+        
+        column_names = [col[1] for col in columns]
+        needs_migration = bool(column_names and "guild_id" not in column_names)
+
+        if needs_migration:
+            import logging
+            logging.getLogger('LRE-BOT.db').info("Migration de la table 'users' vers le nouveau format...")
+            await conn.execute("ALTER TABLE users RENAME TO users_old")
+            
         # Table users (existante avec nouvelles colonnes)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -43,6 +55,23 @@ async def init_db():
                 PRIMARY KEY (user_id, guild_id)
             )
         """)
+
+        if needs_migration:
+            await conn.execute("""
+                INSERT INTO users (
+                    user_id, guild_id, username, join_date, leave_date,
+                    total_time, total_A, total_B, pause_time_A, pause_time_B,
+                    sessions_count, streak_current, streak_best,
+                    first_session, last_session_date
+                )
+                SELECT 
+                    user_id, 0, username, join_date, leave_date,
+                    total_time, total_A, total_B, pause_A, pause_B,
+                    sessions_count, streak_current, streak_best,
+                    first_session, last_session
+                FROM users_old
+            """)
+            await conn.execute("DROP TABLE users_old")
 
         # Table sessions (nouvelle)
         await conn.execute("""
