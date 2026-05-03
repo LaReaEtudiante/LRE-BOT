@@ -6,6 +6,9 @@ import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from . import config
+import logging
+
+logger = logging.getLogger('LRE-BOT.db')
 
 DB_PATH = config.DB_PATH
 
@@ -25,8 +28,7 @@ async def init_db():
         needs_migration = bool(column_names and "guild_id" not in column_names)
 
         if needs_migration:
-            import logging
-            logging.getLogger('LRE-BOT.db').info("Migration de la table 'users' vers le nouveau format...")
+            logger.info("⏳ Migration de la table 'users' vers le nouveau format...")
             await conn.execute("ALTER TABLE users RENAME TO users_old")
             
         # Table users (existante avec nouvelles colonnes)
@@ -135,6 +137,7 @@ async def init_db():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_hour ON sessions(hour_of_day)")
 
         await conn.commit()
+        logger.info("✅ Base de données SQLite initialisée et synchronisée avec succès.")
 
 
 async def upsert_user(user_id: int, username: str, join_date: int, guild_id: int = 0):
