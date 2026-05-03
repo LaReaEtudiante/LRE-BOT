@@ -6,9 +6,12 @@ from discord.ext import commands
 from datetime import datetime, timezone
 import asyncio
 from utils import checks
+import logging
 
 from core import db
 from utils.time_format import format_seconds
+
+logger = logging.getLogger('LRE-BOT.admin')
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):
@@ -55,6 +58,7 @@ class AdminCog(commands.Cog):
         await db.set_maintenance(guild_id, enabled)
 
         if enabled:
+            logger.warning(f"🚧 Mode maintenance activé par {ctx.author}")
             participants = await db.get_participants(guild_id)
             now_ts = int(datetime.now(timezone.utc).timestamp())
 
@@ -76,6 +80,7 @@ class AdminCog(commands.Cog):
             if not participants:
                 await ctx.send("🚧 Mode maintenance activé. Aucune session en cours.")
         else:
+            logger.info(f"✅ Mode maintenance désactivé par {ctx.author}")
             await ctx.send("✅ Mode maintenance désactivé.")
 
 
@@ -97,8 +102,9 @@ class AdminCog(commands.Cog):
         sticky_msg = await ctx.send(message)
         try:
             await db.set_sticky(guild_id, channel_id, sticky_msg.id, message, ctx.author.id)
+            logger.info(f"✅ Sticky message créé par {ctx.author} dans {ctx.channel.name}")
         except Exception as e:
-            print(f"[WARN] Échec sauvegarde sticky en DB: {e}")
+            logger.error(f"❌ Échec sauvegarde sticky en DB: {e}")
             await ctx.send("⚠️ Échec lors de l'enregistrement du sticky en base de données.")
             return
 
@@ -128,6 +134,7 @@ class AdminCog(commands.Cog):
             pass
 
         await db.remove_sticky(guild_id, channel_id)
+        logger.info(f"✅ Sticky message retiré par {ctx.author} dans {ctx.channel.name}")
         await ctx.send("✅ Sticky retiré.")
 
 
@@ -135,6 +142,7 @@ class AdminCog(commands.Cog):
     @checks.is_admin()
     async def clear_stats(self, ctx):
         await db.clear_all_stats(ctx.guild.id)
+        logger.warning(f"⚠️ Statistiques réinitialisées par {ctx.author}")
 
         e = discord.Embed(
             title="🗑 Réinitialisation effectuée",
