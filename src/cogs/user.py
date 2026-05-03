@@ -19,9 +19,6 @@ class UserCommands(commands.Cog):
     # ─── Help ───────────────────────────────────────────────
     @commands.command(name="help", help="Afficher la liste des commandes")
     async def help_command(self, ctx: commands.Context):
-        timestamp = time.time()
-        logger.info(f"⚡ HELP COMMAND EXÉCUTÉE - timestamp={timestamp} - author={ctx.author} - message_id={ctx.message.id}")
-        
         prefix = ctx.prefix
 
         e = discord.Embed(
@@ -54,9 +51,7 @@ class UserCommands(commands.Cog):
             inline=False
         )
 
-        logger.info(f"⚡ HELP COMMAND - Envoi de l'embed - timestamp={timestamp}")
         await ctx.send(embed=e)
-        logger.info(f"⚡ HELP COMMAND - Embed envoyé ✅ - timestamp={timestamp}")
 
     # ─── Join A ─────────────────────────────────────────────
     @commands.command(name="joina", help="Rejoindre le mode A (50-10)")
@@ -64,8 +59,10 @@ class UserCommands(commands.Cog):
     async def joina(self, ctx: commands.Context):
         added = await db.add_participant(ctx.guild.id, ctx.author.id, "A")
         if added:
+            logger.info(f"✅ {ctx.author} a rejoint la session (Mode A)")
             await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode A (50-10)** !")
         else:
+            logger.warning(f"⚠️ {ctx.author} a tenté de rejoindre le Mode A mais est déjà inscrit")
             await ctx.send(f"ℹ️ {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
 
     # ─── Join B ─────────────────────────────────────────────
@@ -74,8 +71,10 @@ class UserCommands(commands.Cog):
     async def joinb(self, ctx: commands.Context):
         added = await db.add_participant(ctx.guild.id, ctx.author.id, "B")
         if added:
+            logger.info(f"✅ {ctx.author} a rejoint la session (Mode B)")
             await ctx.send(f"✅ {ctx.author.mention} a rejoint le **mode B (25-5)** !")
         else:
+            logger.warning(f"⚠️ {ctx.author} a tenté de rejoindre le Mode B mais est déjà inscrit")
             await ctx.send(f"ℹ️ {ctx.author.mention}, vous êtes déjà inscrit en mode A ou B.")
 
     # ─── Leave ──────────────────────────────────────────────
@@ -84,6 +83,7 @@ class UserCommands(commands.Cog):
     async def leave(self, ctx: commands.Context):
         join_row = await db.remove_participant(ctx.guild.id, ctx.author.id)
         if not join_row or join_row[0] is None:
+            logger.warning(f"⚠️ {ctx.author} a fait *leave sans être en session")
             await ctx.send(f"🚫 {ctx.author.mention}, vous n'êtes pas inscrit.")
             return
 
@@ -124,6 +124,8 @@ class UserCommands(commands.Cog):
             end_ts=end_ts
         )
 
+        logger.info(f"✅ {ctx.author} a quitté sa session ({format_seconds(elapsed)} écoulés)")
+
         await ctx.send(
             f"👋 {ctx.author.mention} a quitté la session !\n"
             f"**Travail :** {format_seconds(total_work)}\n"
@@ -139,6 +141,7 @@ class UserCommands(commands.Cog):
         user = await db.get_user(ctx.author.id, guild_id)
 
         if not user:
+            logger.warning(f"⚠️ {ctx.author} a demandé ses stats mais n'a aucune donnée")
             await ctx.send("⚠️ Vous n'avez encore aucune donnée enregistrée.")
             return
 
